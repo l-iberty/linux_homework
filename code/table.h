@@ -5,7 +5,7 @@
 #include <cstdint>
 
 #include "status.h"
-#include "writable_file.h"
+#include "env.h"
 
 #define TABLE_FILE "table"
 #define INDEX_FILE "index"
@@ -22,7 +22,6 @@ public:
     Table();
 
     Table(const Table &) = delete;
-
     Table &operator=(const Table &) = delete;
 
     ~Table();
@@ -41,6 +40,7 @@ private:
     int FindIndexEntryGreaterOrEqual(std::vector<IndexEntry> &index_entries, uint64_t x) const;
 
 private:
+    Env *env_;
     WritableFile *table_file_;
     int nr_entries_;
     bool appending_finished_;

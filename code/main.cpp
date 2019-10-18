@@ -44,9 +44,9 @@ TEST(table_storage, test1) {
         ASSERT_EQ(results[i].size(), expected_query_results[i].size());
     }
 
-    size_t n = std::min(10, results.size());
-    std::cout << n << << " query results...\n";
-    for (size_t i = 0; i < n; i++) {
+    size_t cnt = std::min(static_cast<size_t>(10), results.size());
+    std::cout << n << " query results...\n";
+    for (size_t i = 0; i < cnt; i++) {
         for (uint64_t x:results[i]) {
             std::cout << x << "\t";
         }

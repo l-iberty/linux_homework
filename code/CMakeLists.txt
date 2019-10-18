@@ -8,14 +8,13 @@ set(SOURCE_FILES
         slice.h
         status.h
         random.h
+        posix_env.h
         table.h
         table.cpp
-        writable_file.h
-        writable_file.cpp
         coding.h
         coding.cpp
-        random_access_file.h
-        random_access_file.cpp)
+        env.h
+        env.cpp)
 
 add_executable(table_storage ${SOURCE_FILES})
 target_link_libraries(table_storage gtest pthread)
