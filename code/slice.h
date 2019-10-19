@@ -6,7 +6,7 @@
 
 class Slice {
 public:
-    Slice() : data_(""), size_(0) {}
+    Slice() : data_(nullptr), size_(0) {}
 
     Slice(const char *d, size_t n) : data_(d), size_(n) {}
 

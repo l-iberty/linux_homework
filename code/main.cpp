@@ -11,7 +11,7 @@ TEST(table_storage, test1) {
     Table table;
     Random rnd;
     Status s;
-    const int n = 1000;
+    const int n = 10000000;
     const uint64_t lower_bound = 0;
     const uint64_t upper_bound = 100000000;
     int query_attr_id = 0;

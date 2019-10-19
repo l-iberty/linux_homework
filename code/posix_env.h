@@ -11,36 +11,34 @@
 
 class PosixRandomAccessFile : public RandomAccessFile {
 public:
-    PosixRandomAccessFile(const std::string &filename, int fd, void *mmap_base, size_t length) :
+    PosixRandomAccessFile(const std::string &filename, int fd) :
             filename_(std::move(filename)),
-            fd_(fd),
-            mmap_base_(mmap_base),
-            mmap_length_(length) {
+            fd_(fd) {
         assert(fd_ != -1);
-        assert(mmap_base_ != nullptr);
-        assert(mmap_length_ > 0);
     }
 
     ~PosixRandomAccessFile() override {
         assert(fd_ != -1);
-        assert(mmap_base_ != nullptr);
-        assert(mmap_length_ > 0);
         ::close(fd_);
-        ::munmap(mmap_base_, mmap_length_);
     }
 
-    Status Read(uint64_t offset, size_t n, Slice *slice) override {
-        const char *p = reinterpret_cast<const char *>(mmap_base_) + offset;
-        n = std::min(n, mmap_length_ - offset);
-        *slice = Slice(p, n);
+    Status Read(uint64_t offset, size_t nbytes, Slice *slice) override {
+        assert(fd_ != -1);
+        char *buf = new char[nbytes];
+        ssize_t n = ::pread(fd_, buf, nbytes, offset);
+        if (n != nbytes) {
+            delete buf;
+            return Status::IOError();
+        }
+        std::string d(buf, nbytes);
+        *slice = Slice(d);
+        delete buf;
         return Status::OK();
     }
 
 private:
     const std::string filename_;
     int fd_;
-    void *mmap_base_;
-    size_t mmap_length_;
 };
 
 class PosixWritableFile : public WritableFile {
@@ -153,18 +151,7 @@ public:
             return Status::IOError();
         }
 
-        size_t file_size;
-        Status s = GetFileSize(filename, &file_size);
-        if (!s.ok()) {
-            return s;
-        }
-
-        void *mmap_base = ::mmap(nullptr, file_size, PROT_READ, MAP_SHARED, fd, 0);
-        if (mmap_base == nullptr) {
-            return Status::IOError();
-        }
-
-        *result = new PosixRandomAccessFile(filename, fd, mmap_base, file_size);
+        *result = new PosixRandomAccessFile(filename, fd);
         return Status::OK();
     }
 

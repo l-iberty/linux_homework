@@ -34,7 +34,7 @@ public:
 
     virtual ~RandomAccessFile() = default;
 
-    virtual Status Read(uint64_t offset, size_t n, Slice *slice) = 0;
+    virtual Status Read(uint64_t offset, size_t nbytes, Slice *slice) = 0;
 };
 
 class WritableFile {

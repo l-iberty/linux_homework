@@ -113,13 +113,15 @@ Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
     assert(table_file_readonly_ != nullptr);
     assert(index_file_readonly_ != nullptr);
 
+    Slice slice;
     std::vector<IndexEntry> index_entries;
     uint64_t offset = 0;
-    Slice slice1, slice2;
     for (int i = 0; i < nr_entries_; i++) {
-        index_file_readonly_->Read(offset, sizeof(uint64_t), &slice1);
-        index_file_readonly_->Read(offset + sizeof(uint64_t), sizeof(uint32_t), &slice2);
-        index_entries.push_back(std::make_pair(DecodeFixed64(slice1.data()), DecodeFixed32(slice2.data())));
+        index_file_readonly_->Read(offset, sizeof(uint64_t), &slice);
+        uint64_t var = DecodeFixed64(slice.data());
+        index_file_readonly_->Read(offset + sizeof(uint64_t), sizeof(uint32_t), &slice);
+        uint32_t index = DecodeFixed32(slice.data());
+        index_entries.push_back(std::make_pair(var, index));
         offset += sizeof(uint64_t) + sizeof(uint32_t);
     }
 
@@ -129,7 +131,6 @@ Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
         return Status::NotFound();
     }
 
-    Slice slice;
     for (int i = lower_bound_idx; i <= upper_bound_idx; i++) {
         std::vector<uint64_t> r;
         const size_t nbytes_per_record = kNumTableAttributes * sizeof(uint64_t);
