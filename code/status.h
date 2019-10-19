@@ -8,7 +8,7 @@ class Status {
 public:
     Status() : msg_("") {}
 
-    std::string ToString() const { return std::string(msg_.data(), msg_.size()); }
+    std::string ToString() const { return msg_.ToString(); }
 
     bool ok() const { return code_ == kOk; }
 
@@ -18,17 +18,14 @@ public:
 
     static Status IOError() { return Status(kIOError, "IO error"); }
 
-    static Status TooMuchData() { return Status(kTooMuchData, "too much data"); }
-
-    static Status GeneralError() { return Status(kGeneralError, "general error"); }
+    static Status GeneralError(const Slice& msg) { return Status(kGeneralError, msg); }
 
 private:
     enum Code {
         kOk = 0,
         kNotFound = 1,
         kIOError = 2,
-        kTooMuchData = 3,
-        kGeneralError = 4
+        kGeneralError = 3
     };
 
     Code code_;

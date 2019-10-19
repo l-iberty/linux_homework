@@ -17,8 +17,6 @@ public:
         kMaxTableEntries = 10000000, /* 一共可以存储1,000,000行 */
     };
 
-    typedef std::pair<uint64_t, uint32_t> IndexEntry;
-
     Table();
 
     Table(const Table &) = delete;
@@ -35,13 +33,14 @@ public:
     void Finish();
 
 private:
+    typedef std::pair<uint64_t, uint32_t> IndexEntry;
     int FindIndexEntryLessOrEqual(std::vector<IndexEntry> &index_entries, uint64_t x) const;
-
     int FindIndexEntryGreaterOrEqual(std::vector<IndexEntry> &index_entries, uint64_t x) const;
 
 private:
     Env *env_;
-    WritableFile *table_file_;
+    WritableFile *table_file_, *index_file_;
+    RandomAccessFile *table_file_readonly_, *index_file_readonly_;
     int nr_entries_;
     bool appending_finished_;
     int index_attr_id_; /* 当前索引文件是为哪个属性建立的索引? */

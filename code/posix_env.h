@@ -133,6 +133,7 @@ public:
     PosixEnv() = default;
 
     PosixEnv(const PosixEnv &) = delete;
+
     PosixEnv &operator=(const PosixEnv &)= delete;
 
     ~PosixEnv() = default;
@@ -168,7 +169,7 @@ public:
     }
 
     Status NewWritableFile(const std::string &filename, WritableFile **result) override {
-        int fd = ::open(filename.c_str(), O_RDWR | O_CREAT, 0664);
+        int fd = ::open(filename.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0664);
         if (fd < 0) {
             return Status::IOError();
         }

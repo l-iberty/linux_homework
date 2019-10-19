@@ -7,6 +7,9 @@
 
 Table::Table() :
         env_(CreateEnv()),
+        index_file_(nullptr),
+        table_file_readonly_(nullptr),
+        index_file_readonly_(nullptr),
         nr_entries_(0),
         appending_finished_(false),
         index_attr_id_(-1) {
@@ -16,11 +19,17 @@ Table::Table() :
 
 Table::~Table() {
     Finish();
+    if (index_file_ != nullptr) { delete index_file_; }
+    if (index_file_readonly_ != nullptr) { delete index_file_readonly_; }
+    if (table_file_readonly_ != nullptr) { delete table_file_readonly_; }
 }
 
 Status Table::Append(std::vector<uint64_t> &data) {
+    if (table_file_ == nullptr) {
+        return Status::GeneralError("Table::table_file_ has been closed.");
+    }
     if (nr_entries_ >= kMaxTableEntries) {
-        return Status::TooMuchData();
+        return Status::GeneralError("too much data");
     }
     assert(data.size() == kNumTableAttributes);
     std::string d;
@@ -38,26 +47,24 @@ Status Table::Append(std::vector<uint64_t> &data) {
 
 Status Table::BuildIndexBlock(int attr_id) {
     Status s;
-    RandomAccessFile *table_file;
-    WritableFile *index_file;
-
-    if (!appending_finished_) {
-        return Status::GeneralError();
+    if (!appending_finished_) { /*  */
+        Finish();
     }
     assert(attr_id >= 0 && attr_id < kNumTableAttributes);
     index_attr_id_ = attr_id;
 
-    std::vector<IndexEntry> index_entries;
-    s = env_->NewRandomAccessFile(TABLE_FILE, &table_file);
-    if (!s.ok()) {
-        delete table_file;
-        return s;
+    if (table_file_readonly_ == nullptr) {
+        s = env_->NewRandomAccessFile(TABLE_FILE, &table_file_readonly_);
+        if (!s.ok()) {
+            return s;
+        }
     }
 
     Slice result;
     uint64_t offset = attr_id * sizeof(uint64_t);
+    std::vector<IndexEntry> index_entries;
     for (int i = 0; i < nr_entries_; i++) {
-        table_file->Read(offset, sizeof(uint64_t), &result);
+        table_file_readonly_->Read(offset, sizeof(uint64_t), &result);
         index_entries.push_back(std::make_pair(
                 DecodeFixed64(result.data()), i));
         offset += kNumTableAttributes * sizeof(uint64_t);
@@ -70,53 +77,48 @@ Status Table::BuildIndexBlock(int attr_id) {
         PutFixed32(&d, index_entries[i].second);
     }
 
-    s = env_->NewWritableFile(INDEX_FILE, &index_file);
+    if (index_file_ == nullptr) {
+        s = env_->NewWritableFile(INDEX_FILE, &index_file_);
+        if (!s.ok()) {
+            return s;
+        }
+    }
+
+    s = index_file_->Append(d);
     if (!s.ok()) {
-        delete index_file;
         return s;
     }
-    s = index_file->Append(d);
+    s = index_file_->Close();
     if (!s.ok()) {
-        delete index_file;
-        return s;
-    }
-    s = index_file->Close();
-    if (!s.ok()) {
-        delete index_file;
         return s;
     }
 
-    delete table_file;
-    delete index_file;
+    if (index_file_readonly_ == nullptr) {
+        s = env_->NewRandomAccessFile(INDEX_FILE, &index_file_readonly_);
+        if (!s.ok()) {
+            return s;
+        }
+    }
+
     return Status::OK();
 }
 
 Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
                      std::vector<std::vector<uint64_t>> *results) {
-    Status s;
-    RandomAccessFile *table_file, *index_file;
     if (index_attr_id_ != attr_id) { /* 索引未建立则构建之 */
         std::cout << "index not existed, building it...\n";
         BuildIndexBlock(attr_id);
     }
 
-    s = env_->NewRandomAccessFile(TABLE_FILE, &table_file);
-    if (!s.ok()) {
-        delete table_file;
-        return s;
-    }
-    s = env_->NewRandomAccessFile(INDEX_FILE, &index_file);
-    if (!s.ok()) {
-        delete index_file;
-        return s;
-    }
+    assert(table_file_readonly_ != nullptr);
+    assert(index_file_readonly_ != nullptr);
 
     std::vector<IndexEntry> index_entries;
     uint64_t offset = 0;
     Slice slice1, slice2;
     for (int i = 0; i < nr_entries_; i++) {
-        index_file->Read(offset, sizeof(uint64_t), &slice1);
-        index_file->Read(offset + sizeof(uint64_t), sizeof(uint32_t), &slice2);
+        index_file_readonly_->Read(offset, sizeof(uint64_t), &slice1);
+        index_file_readonly_->Read(offset + sizeof(uint64_t), sizeof(uint32_t), &slice2);
         index_entries.push_back(std::make_pair(DecodeFixed64(slice1.data()), DecodeFixed32(slice2.data())));
         offset += sizeof(uint64_t) + sizeof(uint32_t);
     }
@@ -131,23 +133,20 @@ Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
     for (int i = lower_bound_idx; i <= upper_bound_idx; i++) {
         std::vector<uint64_t> r;
         const size_t nbytes_per_record = kNumTableAttributes * sizeof(uint64_t);
-        table_file->Read(index_entries[i].second * nbytes_per_record,
-                         nbytes_per_record,
-                         &slice);
+        table_file_readonly_->Read(index_entries[i].second * nbytes_per_record,
+                                   nbytes_per_record,
+                                   &slice);
         for (uint64_t off = 0; off < nbytes_per_record; off += sizeof(uint64_t)) {
             r.push_back(DecodeFixed64(slice.data() + off));
         }
         results->push_back(r);
     }
 
-    delete table_file;
-    delete index_file;
     return Status::OK();
 }
 
 void Table::Finish() {
     if (table_file_ != nullptr) {
-        table_file_->Close();
         delete table_file_;
         table_file_ = nullptr;
         appending_finished_ = true;
