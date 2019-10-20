@@ -1,4 +1,4 @@
-#ifndef TABLE_STORAGE_SLICE_H
+﻿#ifndef TABLE_STORAGE_SLICE_H
 #define TABLE_STORAGE_SLICE_H
 
 #include <string>

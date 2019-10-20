@@ -1,4 +1,4 @@
-#ifndef TABLE_STORAGE_RANDOM_H
+﻿#ifndef TABLE_STORAGE_RANDOM_H
 #define TABLE_STORAGE_RANDOM_H
 
 
@@ -17,7 +17,7 @@ public:
     std::vector<uint64_t> GenerateRandomNumbers(int n) {
         std::vector<uint64_t> result;
         for (int i = 0; i < n; i++) {
-            result.push_back(static_cast<uint64_t>(rand()));
+			result.push_back(static_cast<uint64_t>(rand()));
         }
         return result;
     }

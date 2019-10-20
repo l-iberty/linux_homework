@@ -1,6 +1,7 @@
-#ifndef TABLE_STORAGE_ENV_H
+﻿#ifndef TABLE_STORAGE_ENV_H
 #define TABLE_STORAGE_ENV_H
 
+#include <cstdint>
 #include "status.h"
 
 class Env;
@@ -34,7 +35,7 @@ public:
 
     virtual ~RandomAccessFile() = default;
 
-    virtual Status Read(uint64_t offset, size_t nbytes, Slice *slice) = 0;
+    virtual Status Read(uint64_t offset, size_t nbytes, char *scratch, Slice *slice) = 0;
 };
 
 class WritableFile {

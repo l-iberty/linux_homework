@@ -1,32 +1,37 @@
-#ifndef TABLE_STORAGE_POSIXENV_H
-#define TABLE_STORAGE_POSIXENV_H
-#ifndef WIN32
+﻿#ifndef TABLE_STORAGE_WINDOWSENV_H
+#define TABLE_STORAGE_WINDOWSENV_H
 
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <sys/mman.h>
-#include <cassert>
+#ifdef WIN32
+#define NOMINMAX
+
+#include <Windows.h>
 #include <algorithm>
+#include <cassert>
+#include <cstdint>
 #include "env.h"
 
 
-class PosixRandomAccessFile : public RandomAccessFile {
+class WindowsRandomAccessFile : public RandomAccessFile {
 public:
-    PosixRandomAccessFile(const std::string &filename, int fd) :
+    WindowsRandomAccessFile(const std::string &filename, HANDLE file_handle) :
             filename_(std::move(filename)),
-            fd_(fd) {
-        assert(fd_ != -1);
+            file_handle_(file_handle) {
+		assert(file_handle_ != INVALID_HANDLE_VALUE);
     }
 
-    ~PosixRandomAccessFile() override {
-        assert(fd_ != -1);
-        ::close(fd_);
+    ~WindowsRandomAccessFile() override {
+		assert(file_handle_ != INVALID_HANDLE_VALUE);
+		::CloseHandle(file_handle_);
     }
 
     Status Read(uint64_t offset, size_t nbytes, char *scratch, Slice *slice) override {
-        assert(fd_ != -1);
-        ssize_t bytes_read = ::pread(fd_, scratch, nbytes, offset);
+		assert(file_handle_ != INVALID_HANDLE_VALUE);
+		DWORD bytes_read = 0;
+		OVERLAPPED overlapped = { 0 };
+
+		overlapped.OffsetHigh = static_cast<DWORD>(offset >> 32);
+		overlapped.Offset = static_cast<DWORD>(offset);
+		::ReadFile(file_handle_, scratch, nbytes, &bytes_read, &overlapped);
         if (bytes_read != nbytes) {
             return Status::IOError();
         }
@@ -36,20 +41,20 @@ public:
 
 private:
     const std::string filename_;
-    int fd_;
+	HANDLE file_handle_;
 };
 
-class PosixWritableFile : public WritableFile {
+class WindowsWritableFile : public WritableFile {
 public:
-    PosixWritableFile(const std::string &filename, int fd) :
+    WindowsWritableFile(const std::string &filename, HANDLE file_handle) :
             filename_(std::move(filename)),
-            fd_(fd),
+			file_handle_(file_handle),
             pos_(0),
             offset_(0) {
-        assert(fd != -1);
+		assert(file_handle_ != INVALID_HANDLE_VALUE);
     }
 
-    ~PosixWritableFile() override {
+    ~WindowsWritableFile() override {
         Close();
     }
 
@@ -90,8 +95,8 @@ public:
         if (!status.ok()) {
             return status;
         }
-        if (fd_ >= 0 && ::close(fd_) == 0) {
-            fd_ = -1;
+        if (file_handle_ != INVALID_HANDLE_VALUE && ::CloseHandle(file_handle_)) {
+			file_handle_ = INVALID_HANDLE_VALUE;
             if (offset_ == 0) {
                 remove(filename_.c_str());
             }
@@ -104,12 +109,13 @@ public:
         if (pos_ == 0) { /* no data in the buf_[] */
             return Status::OK();
         }
-        ssize_t bytes_written = ::write(fd_, buf_, pos_);
+		DWORD bytes_written = 0;
+		::WriteFile(file_handle_, reinterpret_cast<LPCVOID>(buf_), pos_, &bytes_written, nullptr);
         if (bytes_written <= 0) {
-            return Status::IOError();
+			return Status::IOError();
         }
 		pos_ = 0;
-        return Status::OK();
+		return Status::OK();
     }
 
 private:
@@ -118,52 +124,56 @@ private:
     };
 
     const std::string filename_;
-    int fd_;
+	HANDLE file_handle_;
     char buf_[kWritableBufferSize];
     size_t pos_;
     off_t offset_;
 };
 
-class PosixEnv : public Env {
+class WindowsEnv : public Env {
 public:
-    PosixEnv() = default;
+    WindowsEnv() = default;
 
-    PosixEnv(const PosixEnv &) = delete;
+    WindowsEnv(const WindowsEnv &) = delete;
 
-    PosixEnv &operator=(const PosixEnv &)= delete;
+    WindowsEnv &operator=(const WindowsEnv &)= delete;
 
-    ~PosixEnv() = default;
+    ~WindowsEnv() = default;
 
     Status GetFileSize(const std::string &filename, size_t *size) override {
-        struct stat buf;
-        if (::stat(filename.c_str(), &buf) >= 0) {
-            *size = static_cast<size_t>(buf.st_size);
-            return Status::OK();
-        }
-        return Status::IOError();
+		HANDLE file_handle = ::CreateFileA(filename.c_str(), GENERIC_READ, 0, nullptr,
+			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+		if (file_handle == INVALID_HANDLE_VALUE) {
+			return Status::IOError();
+		}
+		*size = ::GetFileSize(file_handle, nullptr);
+		::CloseHandle(file_handle);
+        return Status::OK();
     }
 
     Status NewRandomAccessFile(const std::string &filename, RandomAccessFile **result) override {
-        int fd = ::open(filename.c_str(), O_RDONLY);
-        if (fd < 0) {
-            return Status::IOError();
-        }
+		HANDLE file_handle = ::CreateFileA(filename.c_str(), GENERIC_READ, 0, nullptr,
+			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+		if (file_handle == INVALID_HANDLE_VALUE) {
+			return Status::IOError();
+		}
 
-        *result = new PosixRandomAccessFile(filename, fd);
+        *result = new WindowsRandomAccessFile(filename, file_handle);
         return Status::OK();
     }
 
     Status NewWritableFile(const std::string &filename, WritableFile **result) override {
-        int fd = ::open(filename.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0664);
-        if (fd < 0) {
-            return Status::IOError();
-        }
+		HANDLE file_handle = ::CreateFileA(filename.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+			CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+		if (file_handle == INVALID_HANDLE_VALUE) {
+			return Status::IOError();
+		}
 
-        *result = new PosixWritableFile(filename, fd);
+        *result = new WindowsWritableFile(filename, file_handle);
         return Status::OK();
     }
 };
 
 
 #endif /* WIN32 */
-#endif /* TABLE_STORAGE_POSIXENV_H */
+#endif /* TABLE_STORAGE_WINDOWSENV_H */

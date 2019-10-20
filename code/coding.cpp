@@ -1,4 +1,4 @@
-#include <cstring>
+﻿#include <cstring>
 #include "coding.h"
 
 void EncodeFixed64(char *dst, uint64_t value) {

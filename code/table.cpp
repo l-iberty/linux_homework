@@ -13,8 +13,8 @@ Table::Table() :
         nr_entries_(0),
         appending_finished_(false),
         index_attr_id_(-1) {
-    Status s = env_->NewWritableFile(TABLE_FILE, &table_file_);
-    assert(s.ok());
+    Status status = env_->NewWritableFile(TABLE_FILE, &table_file_);
+    assert(status.ok());
 }
 
 Table::~Table() {
@@ -37,66 +37,71 @@ Status Table::Append(std::vector<uint64_t> &data) {
         PutFixed64(&d, data[i]);
     }
 
-    Status s = table_file_->Append(d);
-    if (!s.ok()) {
-        return s;
+    Status status = table_file_->Append(d);
+    if (!status.ok()) {
+        return status;
     }
     nr_entries_++;
     return Status::OK();
 }
 
 Status Table::BuildIndexBlock(int attr_id) {
-    Status s;
-    if (!appending_finished_) { /*  */
+    Status status;
+    if (!appending_finished_) { /* 添加数据结束后才建立索引 */
         Finish();
     }
     assert(attr_id >= 0 && attr_id < kNumTableAttributes);
     index_attr_id_ = attr_id;
 
     if (table_file_readonly_ == nullptr) {
-        s = env_->NewRandomAccessFile(TABLE_FILE, &table_file_readonly_);
-        if (!s.ok()) {
-            return s;
+        status = env_->NewRandomAccessFile(TABLE_FILE, &table_file_readonly_);
+        if (!status.ok()) {
+            return status;
         }
     }
 
+	/* 将attr_id所对应的列读入index_entries */
     Slice result;
+	char *scratch = new char[sizeof(uint64_t)];
     uint64_t offset = attr_id * sizeof(uint64_t);
     std::vector<IndexEntry> index_entries;
     for (int i = 0; i < nr_entries_; i++) {
-        table_file_readonly_->Read(offset, sizeof(uint64_t), &result);
+        table_file_readonly_->Read(offset, sizeof(uint64_t), scratch, &result);
         index_entries.push_back(std::make_pair(
                 DecodeFixed64(result.data()), i));
         offset += kNumTableAttributes * sizeof(uint64_t);
     }
-
-    std::sort(index_entries.begin(), index_entries.end());
-    std::string d;
-    for (size_t i = 0; i < index_entries.size(); i++) {
-        PutFixed64(&d, index_entries[i].first);
-        PutFixed32(&d, index_entries[i].second);
-    }
+	delete[] scratch;
 
     if (index_file_ == nullptr) {
-        s = env_->NewWritableFile(INDEX_FILE, &index_file_);
-        if (!s.ok()) {
-            return s;
+        status = env_->NewWritableFile(INDEX_FILE, &index_file_);
+        if (!status.ok()) {
+            return status;
         }
     }
 
-    s = index_file_->Append(d);
-    if (!s.ok()) {
-        return s;
-    }
-    s = index_file_->Close();
-    if (!s.ok()) {
-        return s;
+	/* index_entries排序后写入索引文件index_file_ */
+    std::sort(index_entries.begin(), index_entries.end());
+	std::string d;
+	for (size_t i = 0; i < index_entries.size(); i++) {
+		PutFixed64(&d, index_entries[i].first);
+		PutFixed32(&d, index_entries[i].second);
+	}
+	status = index_file_->Append(d);
+	if (!status.ok()) {
+		return status;
+	}
+
+    status = index_file_->Close();
+    if (!status.ok()) {
+        return status;
     }
 
+	/* 打开只读的index_file_以便后续使用 */
     if (index_file_readonly_ == nullptr) {
-        s = env_->NewRandomAccessFile(INDEX_FILE, &index_file_readonly_);
-        if (!s.ok()) {
-            return s;
+        status = env_->NewRandomAccessFile(INDEX_FILE, &index_file_readonly_);
+        if (!status.ok()) {
+            return status;
         }
     }
 
@@ -114,12 +119,14 @@ Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
     assert(index_file_readonly_ != nullptr);
 
     Slice slice;
+	char *scratch = new char[kNumTableAttributes * sizeof(uint64_t)];
+
     std::vector<IndexEntry> index_entries;
     uint64_t offset = 0;
     for (int i = 0; i < nr_entries_; i++) {
-        index_file_readonly_->Read(offset, sizeof(uint64_t), &slice);
+        index_file_readonly_->Read(offset, sizeof(uint64_t), scratch, &slice);
         uint64_t var = DecodeFixed64(slice.data());
-        index_file_readonly_->Read(offset + sizeof(uint64_t), sizeof(uint32_t), &slice);
+        index_file_readonly_->Read(offset + sizeof(uint64_t), sizeof(uint32_t), scratch, &slice);
         uint32_t index = DecodeFixed32(slice.data());
         index_entries.push_back(std::make_pair(var, index));
         offset += sizeof(uint64_t) + sizeof(uint32_t);
@@ -128,21 +135,22 @@ Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
     int lower_bound_idx = FindIndexEntryGreaterOrEqual(index_entries, lower_bound);
     int upper_bound_idx = FindIndexEntryLessOrEqual(index_entries, upper_bound);
     if (lower_bound_idx == -1 || upper_bound_idx == -1) {
+		delete[] scratch;
         return Status::NotFound();
     }
 
     for (int i = lower_bound_idx; i <= upper_bound_idx; i++) {
         std::vector<uint64_t> r;
         const size_t nbytes_per_record = kNumTableAttributes * sizeof(uint64_t);
-        table_file_readonly_->Read(index_entries[i].second * nbytes_per_record,
-                                   nbytes_per_record,
-                                   &slice);
+		table_file_readonly_->Read(index_entries[i].second * nbytes_per_record, 
+			nbytes_per_record, scratch, &slice);
         for (uint64_t off = 0; off < nbytes_per_record; off += sizeof(uint64_t)) {
             r.push_back(DecodeFixed64(slice.data() + off));
         }
         results->push_back(r);
     }
 
+	delete[] scratch;
     return Status::OK();
 }
 
