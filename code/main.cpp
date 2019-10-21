@@ -58,8 +58,13 @@ TEST(table_storage, test1) {
 
     /* 打印查询结果 */
     size_t cnt = std::min(static_cast<size_t>(100), results.size());
+#ifdef WIN32
     printf("%lu query results with range [0x%llX, 0x%llX] on attr %d:\n",
 		results.size(), lower_bound, upper_bound, query_attr_id);
+#else
+    printf("%lu query results with range [0x%lX, 0x%lX] on attr %d:\n",
+		results.size(), lower_bound, upper_bound, query_attr_id);
+#endif // WIN32
     for (size_t i = 0; i < cnt; i++) {
         printf("[%lu] ", i);
         printf("...... %016lX ......\n", results[i][query_attr_id]);
