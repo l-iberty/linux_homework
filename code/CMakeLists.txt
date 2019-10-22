@@ -9,12 +9,13 @@ set(SOURCE_FILES
         status.h
         random.h
         posix_env.h
+        mutexlock.h
         table.h
         table.cpp
         coding.h
         coding.cpp
         env.h
-        env.cpp mutexlock.h)
+        env.cpp)
 
 add_executable(table_storage ${SOURCE_FILES})
 target_link_libraries(table_storage gtest pthread)

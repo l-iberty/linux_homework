@@ -1,19 +1,23 @@
-#include <cassert>
 #include <iostream>
+#include <string>
 #include <algorithm>
+#include <cassert>
 #include "table.h"
 #include "coding.h"
 #include "env.h"
 
-Table::Table() :
+
+Table::Table(const std::string &table_file_name, const std::string &index_file_name) :
         env_(CreateEnv()),
         index_file_(nullptr),
         table_file_readonly_(nullptr),
         index_file_readonly_(nullptr),
+		table_file_name_(std::move(table_file_name)),
+		index_file_name_(std::move(index_file_name)),
         nr_entries_(0),
         appending_finished_(false),
         index_attr_id_(-1) {
-    Status status = env_->NewWritableFile(TABLE_FILE, &table_file_);
+    Status status = env_->NewWritableFile(table_file_name_, &table_file_);
     assert(status.ok());
 }
 
@@ -55,7 +59,7 @@ Status Table::BuildIndexBlock(int attr_id) {
     index_attr_id_ = attr_id;
 
     if (table_file_readonly_ == nullptr) {
-        status = env_->NewRandomAccessFile(TABLE_FILE, &table_file_readonly_);
+        status = env_->NewRandomAccessFile(table_file_name_, &table_file_readonly_);
         if (!status.ok()) {
             return status;
         }
@@ -75,7 +79,7 @@ Status Table::BuildIndexBlock(int attr_id) {
 	delete[] scratch;
 
     if (index_file_ == nullptr) {
-        status = env_->NewWritableFile(INDEX_FILE, &index_file_);
+        status = env_->NewWritableFile(index_file_name_, &index_file_);
         if (!status.ok()) {
             return status;
         }
@@ -100,7 +104,7 @@ Status Table::BuildIndexBlock(int attr_id) {
 
 	/* 打开只读的index_file_以便后续使用 */
     if (index_file_readonly_ == nullptr) {
-        status = env_->NewRandomAccessFile(INDEX_FILE, &index_file_readonly_);
+        status = env_->NewRandomAccessFile(index_file_name_, &index_file_readonly_);
         if (!status.ok()) {
             return status;
         }

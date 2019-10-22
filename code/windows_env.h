@@ -77,7 +77,7 @@ public:
                     bytes_left -= n;
                     offset_ += n;
                 }
-                return Status::OK();
+                return status;
             }
             status = Flush();
             if (!status.ok()) {

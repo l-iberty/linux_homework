@@ -8,9 +8,6 @@
 #include "env.h"
 #include "mutexlock.h"
 
-#define TABLE_FILE "table"
-#define INDEX_FILE "index"
-
 class Table {
 public:
     enum {
@@ -18,7 +15,7 @@ public:
         kMaxTableEntries = 10000000, /* 一共可以存储1,000,000行 */
     };
 
-    Table();
+    Table(const std::string &table_file_name, const std::string &index_file_name);
 
     Table(const Table &) = delete;
     Table &operator=(const Table &) = delete;
@@ -42,6 +39,7 @@ private:
     Env *env_;
     WritableFile *table_file_, *index_file_;
     RandomAccessFile *table_file_readonly_, *index_file_readonly_;
+	const std::string table_file_name_, index_file_name_;
     int nr_entries_;
     bool appending_finished_;
     int index_attr_id_; /* 当前索引文件是为哪个属性建立的索引? */

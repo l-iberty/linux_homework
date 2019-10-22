@@ -8,8 +8,8 @@ public:
     Mutex() = default;
     ~Mutex() = default;
 
-    Mutex(const Mutex &) = delete;
-    Mutex &operator=(const Mutex &) = delete;
+    Mutex(const Mutex&) = delete;
+    Mutex &operator=(const Mutex&) = delete;
 
     void Lock() { mu_.lock(); }
     void Unlock() { mu_.unlock(); }
@@ -22,6 +22,9 @@ class MutexLock {
 public:
     MutexLock(Mutex *mu):mu_(mu) { mu_->Lock(); }
     ~MutexLock() { mu_->Unlock(); }
+
+	MutexLock(const MutexLock&) = delete;
+	MutexLock &operator=(const MutexLock&) = delete;
 private:
     Mutex *mu_;
 };

@@ -1,16 +1,37 @@
 ﻿#include <iostream>
 #include <vector>
+#include <thread>
+#include <atomic>
 #include <stdlib.h>
 #include <time.h>
 #include <gtest/gtest.h>
-#include <thread>
 
 #include "table.h"
 #include "random.h"
 
-#if 0
+/* global vars for TEST(table_storage,multi_thread) */
+Table g_table("table0", "index0");
+std::atomic<size_t> g_nr_expected_query_results(0);
+const uint64_t g_lower_bound = 1000;
+const uint64_t g_upper_bound = 100000;
+int g_query_attr_id = 0;
+
+void thd_routine(const int n) {
+    Random rnd;
+    Status status;
+
+    for (int i = 0; i < n; i++) {
+        std::vector<uint64_t> nums = rnd.GenerateRandomNumbers(Table::kNumTableAttributes);
+        status = g_table.Append(nums);
+        ASSERT_TRUE(status.ok());
+        if (nums[g_query_attr_id] >= g_lower_bound && nums[g_query_attr_id] <= g_upper_bound) {
+            g_nr_expected_query_results++;
+        }
+    }
+}
+
 TEST(table_storage, single_thread) {
-    Table table;
+    Table table("table1", "index1");
     Random rnd;
     Status status;
     const int n = 1000000;
@@ -72,53 +93,23 @@ TEST(table_storage, single_thread) {
         printf("...... %016lX ......\n", query_results[i][query_attr_id]);
     }
 }
-#endif
-
-Table g_table;
-size_t g_nr_expected_query_results;
-Mutex g_mutex;
-const uint64_t g_lower_bound = 1000;
-const uint64_t g_upper_bound = 100000;
-int g_query_attr_id = 0;
-
-void thd_routine(const int n) {
-    Random rnd;
-    Status status;
-
-    for (int i = 0; i < n; i++) {
-        std::vector<uint64_t> nums = rnd.GenerateRandomNumbers(Table::kNumTableAttributes);
-        status = g_table.Append(nums);
-        ASSERT_TRUE(status.ok());
-        if (nums[g_query_attr_id] >= g_lower_bound && nums[g_query_attr_id] <= g_upper_bound) {
-            g_mutex.Lock();
-            g_nr_expected_query_results++;
-            g_mutex.Unlock();
-        }
-    }
-}
 
 TEST(table_storage, multi_thread) {
-    Table table;
     Status status;
-    const int n = 100000 / 8;
+	const int nr_thds = 8;
+    const int n = 1000000 / nr_thds;
 
-    std::thread t1(thd_routine, n);
-    std::thread t2(thd_routine, n);
-    std::thread t3(thd_routine, n);
-    std::thread t4(thd_routine, n);
-    std::thread t5(thd_routine, n);
-    std::thread t6(thd_routine, n);
-    std::thread t7(thd_routine, n);
-    std::thread t8(thd_routine, n);
-
-    t1.join();
-    t2.join();
-    t3.join();
-    t4.join();
-    t5.join();
-    t6.join();
-    t7.join();
-    t8.join();
+	std::thread **thds = new std::thread*[nr_thds];
+	for (int i = 0; i < nr_thds; i++) {
+		thds[i] = new std::thread(thd_routine, n);
+	}
+	for (int i = 0; i < nr_thds; i++) {
+		thds[i]->join();
+	}
+	for (int i = 0; i < nr_thds; i++) {
+		delete thds[i];
+	}
+	delete[] thds;
 
     //g_table.Finish();
     //g_table.BuildIndexBlock(query_attr_id); // 如果不显式调用Finish()和BuildIndexBlock(), Lookup()会自己完成这两个调用
