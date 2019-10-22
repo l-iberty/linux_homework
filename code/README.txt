@@ -1,1 +1,0 @@
-C/C++ -> Code Generation中Runtime Library必须与编译gtest库所使用的选项一致
