@@ -14,7 +14,7 @@ set(SOURCE_FILES
         coding.h
         coding.cpp
         env.h
-        env.cpp)
+        env.cpp mutexlock.h)
 
 add_executable(table_storage ${SOURCE_FILES})
 target_link_libraries(table_storage gtest pthread)

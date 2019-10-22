@@ -6,6 +6,7 @@
 
 #include "status.h"
 #include "env.h"
+#include "mutexlock.h"
 
 #define TABLE_FILE "table"
 #define INDEX_FILE "index"
@@ -44,7 +45,7 @@ private:
     int nr_entries_;
     bool appending_finished_;
     int index_attr_id_; /* 当前索引文件是为哪个属性建立的索引? */
-
+    Mutex mutex_;
 };
 
 #endif /* TABLE_STORAGE_TABLE_H */

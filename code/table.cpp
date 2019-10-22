@@ -25,6 +25,7 @@ Table::~Table() {
 }
 
 Status Table::Append(std::vector<uint64_t> &data) {
+    MutexLock l(&mutex_);
     if (table_file_ == nullptr) {
         return Status::GeneralError("Table::table_file_ has been closed.");
     }
