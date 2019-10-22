@@ -162,11 +162,27 @@ public:
         return Status::OK();
     }
 
-    Status NewWritableFile(const std::string &filename, WritableFile **result) override {
+	Status NewWritableFile(const std::string &filename, WritableFile **result) override {
 		HANDLE file_handle = ::CreateFileA(filename.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
 			CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
 		if (file_handle == INVALID_HANDLE_VALUE) {
 			return Status::IOError();
+		}
+
+		*result = new WindowsWritableFile(filename, file_handle);
+		return Status::OK();
+	}
+
+	Status OpenWritableFile(const std::string &filename, WritableFile **result) override {
+		HANDLE file_handle = ::CreateFileA(filename.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+			OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+		if (file_handle == INVALID_HANDLE_VALUE) {
+			return Status::IOError();
+		}
+		if (GetLastError() == ERROR_ALREADY_EXISTS) {
+			if (INVALID_SET_FILE_POINTER == ::SetFilePointer(file_handle, 0, nullptr, FILE_END)) {
+				return Status::IOError();
+			}
 		}
 
         *result = new WindowsWritableFile(filename, file_handle);

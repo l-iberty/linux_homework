@@ -24,6 +24,8 @@ public:
     virtual Status NewRandomAccessFile(const std::string &filename, RandomAccessFile** result) = 0;
 
     virtual Status NewWritableFile(const std::string &filename, WritableFile** result) = 0;
+
+    virtual Status OpenWritableFile(const std::string &filename, WritableFile** result) = 0;
 };
 
 class RandomAccessFile {

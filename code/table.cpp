@@ -7,17 +7,18 @@
 #include "env.h"
 
 
-Table::Table(const std::string &table_file_name, const std::string &index_file_name) :
+Table::Table(const std::string &table_file_name, const std::string &index_file_name, const std::string &manifest_file_name) :
         env_(CreateEnv()),
         index_file_(nullptr),
         table_file_readonly_(nullptr),
         index_file_readonly_(nullptr),
 		table_file_name_(std::move(table_file_name)),
 		index_file_name_(std::move(index_file_name)),
+		manifest_file_name_(std::move(manifest_file_name)),
         nr_entries_(0),
         appending_finished_(false),
         index_attr_id_(-1) {
-    Status status = env_->NewWritableFile(table_file_name_, &table_file_);
+	Status status = Recover();
     assert(status.ok());
 }
 
@@ -26,6 +27,7 @@ Table::~Table() {
     if (index_file_ != nullptr) { delete index_file_; }
     if (index_file_readonly_ != nullptr) { delete index_file_readonly_; }
     if (table_file_readonly_ != nullptr) { delete table_file_readonly_; }
+	if (env_ != nullptr) { delete env_; }
 }
 
 Status Table::Append(std::vector<uint64_t> &data) {
@@ -115,7 +117,9 @@ Status Table::BuildIndexBlock(int attr_id) {
 
 Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
                      std::vector<std::vector<uint64_t>> *results) {
-    if (index_attr_id_ != attr_id) { /* 索引未建立则构建之 */
+    if (index_attr_id_ != attr_id ||
+		(table_file_readonly_ == nullptr &&
+		index_file_readonly_ == nullptr)) { /* 索引未建立则构建之 */
         std::cout << "index not existed, building it...\n";
         BuildIndexBlock(attr_id);
     }
@@ -159,12 +163,26 @@ Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
     return Status::OK();
 }
 
-void Table::Finish() {
-    if (table_file_ != nullptr) {
-        delete table_file_;
-        table_file_ = nullptr;
-        appending_finished_ = true;
-    }
+Status Table::Finish() {
+	Status status;
+
+	if (table_file_ != nullptr) {
+		delete table_file_;
+		table_file_ = nullptr;
+		appending_finished_ = true;
+	}
+
+	/* write metedata to MANIFEST */
+	WritableFile *manifest_file = nullptr;
+	std::string d;
+	status = env_->NewWritableFile(manifest_file_name_, &manifest_file);
+	if (!status.ok()) { return status; }
+	PutFixed32(&d, static_cast<uint32_t>(nr_entries_));
+	PutFixed32(&d, static_cast<uint32_t>(index_attr_id_));
+	manifest_file->Append(d);
+	delete manifest_file;
+
+	return status;
 }
 
 int Table::FindIndexEntryGreaterOrEqual(std::vector<IndexEntry> &index_entries, uint64_t x) const {
@@ -217,4 +235,27 @@ int Table::FindIndexEntryLessOrEqual(std::vector<IndexEntry> &index_entries, uin
         }
     }
     return -1;
+}
+
+Status Table::Recover() {
+	Status status;
+	Slice slice;
+	RandomAccessFile *manifest_file = nullptr;
+	char scratch[sizeof(int)];
+
+	status = env_->OpenWritableFile(table_file_name_, &table_file_);
+	if (!status.ok()) { return status; }
+
+	status = env_->NewRandomAccessFile(manifest_file_name_, &manifest_file);
+	if (status.ok()) {
+		status = manifest_file->Read(0, sizeof(uint32_t), scratch, &slice);
+		if (!status.ok()) { return status; }
+		nr_entries_ = DecodeFixed32(scratch);
+
+		status = manifest_file->Read(sizeof(uint32_t), sizeof(uint32_t), scratch, &slice);
+		if (!status.ok()) { return status; }
+		index_attr_id_ = DecodeFixed32(scratch);
+	}
+	delete manifest_file;
+	return Status::OK();
 }
