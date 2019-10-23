@@ -12,13 +12,19 @@ public:
 
     bool ok() const { return code_ == kOk; }
 
+    bool IsNotFound() const { return code_ == kNotFound; }
+
+    bool IsIOError() const { return code_ == kIOError; }
+
+    bool IsGeneralError() const { return code_ == kGeneralError; }
+
     static Status OK() { return Status(kOk, ""); }
 
     static Status NotFound() { return Status(kNotFound, "not found"); }
 
     static Status IOError() { return Status(kIOError, "IO error"); }
 
-    static Status GeneralError(const Slice& msg) { return Status(kGeneralError, msg); }
+    static Status GeneralError(const Slice &msg) { return Status(kGeneralError, msg); }
 
 private:
     enum Code {

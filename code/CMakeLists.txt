@@ -9,6 +9,7 @@ set(SOURCE_FILES
         status.h
         random.h
         posix_env.h
+        windows_env.h
         mutexlock.h
         table.h
         table.cpp

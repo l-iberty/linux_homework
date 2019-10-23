@@ -144,6 +144,7 @@ public:
 		HANDLE file_handle = ::CreateFileA(filename.c_str(), GENERIC_READ, 0, nullptr,
 			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
 		if (file_handle == INVALID_HANDLE_VALUE) {
+		    *size = 0;
 			return Status::IOError();
 		}
 		*size = ::GetFileSize(file_handle, nullptr);
@@ -155,6 +156,7 @@ public:
 		HANDLE file_handle = ::CreateFileA(filename.c_str(), GENERIC_READ, 0, nullptr,
 			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
 		if (file_handle == INVALID_HANDLE_VALUE) {
+		    *result = nullptr;
 			return Status::IOError();
 		}
 
@@ -166,6 +168,7 @@ public:
 		HANDLE file_handle = ::CreateFileA(filename.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
 			CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
 		if (file_handle == INVALID_HANDLE_VALUE) {
+		    *result = nullptr;
 			return Status::IOError();
 		}
 
@@ -177,10 +180,12 @@ public:
 		HANDLE file_handle = ::CreateFileA(filename.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
 			OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
 		if (file_handle == INVALID_HANDLE_VALUE) {
+		    *result = nullptr;
 			return Status::IOError();
 		}
 		if (GetLastError() == ERROR_ALREADY_EXISTS) {
 			if (INVALID_SET_FILE_POINTER == ::SetFilePointer(file_handle, 0, nullptr, FILE_END)) {
+		        *result = nullptr;
 				return Status::IOError();
 			}
 		}

@@ -1,5 +1,6 @@
 ﻿#include <iostream>
 #include <vector>
+#include <unordered_map>
 #include <thread>
 #include <atomic>
 #include <stdlib.h>
@@ -11,7 +12,7 @@
 #include "coding.h"
 
 #if 0
-/* global vars for TEST(table_storage,multi_thread) */
+/* global vars for TEST(table_storage,multi_thread1) */
 Table g_table("table0", "index0", "MANIFEST0");
 std::atomic<size_t> g_nr_expected_query_results(0);
 const uint64_t g_lower_bound = 1000;
@@ -34,20 +35,20 @@ void thd_routine(const int n) {
 
 TEST(table_storage, multi_thread) {
     Status status;
-	const int nr_thds = 8;
+    const int nr_thds = 8;
     const int n = 1000 / nr_thds;
 
-	std::thread **thds = new std::thread*[nr_thds];
-	for (int i = 0; i < nr_thds; i++) {
-		thds[i] = new std::thread(thd_routine, n);
-	}
-	for (int i = 0; i < nr_thds; i++) {
-		thds[i]->join();
-	}
-	for (int i = 0; i < nr_thds; i++) {
-		delete thds[i];
-	}
-	delete[] thds;
+    std::thread **thds = new std::thread*[nr_thds];
+    for (int i = 0; i < nr_thds; i++) {
+        thds[i] = new std::thread(thd_routine, n);
+    }
+    for (int i = 0; i < nr_thds; i++) {
+        thds[i]->join();
+    }
+    for (int i = 0; i < nr_thds; i++) {
+        delete thds[i];
+    }
+    delete[] thds;
 
     //g_table.Finish();
     //g_table.BuildIndexBlock(query_attr_id); // 如果不显式调用Finish()和BuildIndexBlock(), Lookup()会自己完成这两个调用
@@ -89,25 +90,28 @@ TEST(table_storage, multi_thread) {
 }
 #endif
 
-TEST(table_storage, single_thread) {
+TEST(table_storage, single_thread1) {
     Table table("table1", "index1", "MANIFEST1");
     Random rnd;
     Status status;
     const int n = 1000;
-    const uint64_t lower_bound = 1000;
-    const uint64_t upper_bound = 100000;
+    const uint64_t lower_bound = 100;
+    const uint64_t upper_bound = 1000000;
     int query_attr_id = 0;
     size_t nr_expected_query_results = 0;
     clock_t start, end;
 
-	Env *env = CreateEnv();
-	RandomAccessFile *data_r;
-	Slice slice;
-	char scratch[sizeof(int)];
-	env->NewRandomAccessFile("data", &data_r);
-	data_r->Read(0, sizeof(int), scratch, &slice);
-	nr_expected_query_results = static_cast<size_t>(DecodeFixed32(scratch));
-	delete data_r;
+    Env *env = CreateEnv();
+    RandomAccessFile *data_r = nullptr;
+    Slice slice;
+    char scratch[sizeof(int)];
+    status = env->NewRandomAccessFile("data", &data_r);
+    if (status.ok()) {
+        status = data_r->Read(0, sizeof(int), scratch, &slice);
+        ASSERT_TRUE(status.ok());
+        nr_expected_query_results = static_cast<size_t>(DecodeFixed32(scratch));
+        delete data_r;
+    }
 
     /* 向表中添加数据 */
     start = clock();
@@ -115,6 +119,9 @@ TEST(table_storage, single_thread) {
     for (int i = 0; i < n; i++) {
         std::vector<uint64_t> nums = rnd.GenerateRandomNumbers(Table::kNumTableAttributes);
         status = table.Append(nums);
+        if (!status.ok()) {
+            printf("error message: %s\n", status.ToString().c_str());
+        }
         ASSERT_TRUE(status.ok());
         if (nums[query_attr_id] >= lower_bound && nums[query_attr_id] <= upper_bound) {
             nr_expected_query_results++;
@@ -122,13 +129,18 @@ TEST(table_storage, single_thread) {
     }
     end = clock();
     printf("Done. Time elapsed: %.5fs\n", (double) (end - start) / CLOCKS_PER_SEC);
+    table.Finish();
 
-	WritableFile *data_w;
-	std::string d;
-	env->NewWritableFile("data", &data_w);
-	PutFixed32(&d, static_cast<uint32_t>(nr_expected_query_results));
-	data_w->Append(d);
-	delete data_w;
+    WritableFile *data_w = nullptr;
+    status = env->NewWritableFile("data", &data_w);
+    ASSERT_TRUE(status.ok());
+    std::string d;
+    PutFixed32(&d, static_cast<uint32_t>(nr_expected_query_results));
+    status = data_w->Append(d);
+    ASSERT_TRUE(status.ok());
+    if (data_w != nullptr) {
+        delete data_w;
+    }
 
     //table.Finish();
     //table.BuildIndexBlock(query_attr_id); // 如果不显式调用Finish()和BuildIndexBlock(), Lookup()会自己完成这两个调用
@@ -139,12 +151,6 @@ TEST(table_storage, single_thread) {
     if (!status.ok()) {
         std::cout << status.ToString() << std::endl;
     }
-
-    /* Table::Lookup()调用结束后Table::table_file_将被关闭, 此时如果调用Table::Append()就会出错 */
-    std::vector<uint64_t> temp(100, 100);
-    status = table.Append(temp);
-    ASSERT_FALSE(status.ok());
-    printf("error message: %s\n", status.ToString().c_str());
 
     /* 校验查询结果 */
     ASSERT_EQ(query_results.size(), nr_expected_query_results);
@@ -169,6 +175,54 @@ TEST(table_storage, single_thread) {
     }
 }
 
+TEST(table_storage, single_thread2) {
+    Table table("table2", "index2", "MANIFEST2");
+    Status status;
+    std::vector<std::vector<uint64_t>> vec_nums = {
+            std::vector<uint64_t>(100, 1), // 0
+            std::vector<uint64_t>(100, 1), // 1
+            std::vector<uint64_t>(100, 2), // 2
+            std::vector<uint64_t>(100, 2), // 3
+            std::vector<uint64_t>(100, 3), // 4
+            std::vector<uint64_t>(100, 3), // 5
+            std::vector<uint64_t>(100, 3), // 6
+            std::vector<uint64_t>(100, 4), // 7
+            std::vector<uint64_t>(100, 5) // 8
+    };
+    std::vector<std::vector<uint64_t>> results;
+    status = table.Append(vec_nums[0]);
+    ASSERT_TRUE(status.ok());
+    status = table.Lookup(0, 0, 0, &results);
+    ASSERT_TRUE(status.ok());
+    ASSERT_TRUE(results.empty());
+
+    results.clear();
+    status = table.Append(vec_nums[8]);
+    ASSERT_TRUE(status.ok());
+    status = table.Lookup(0, 1, 5, &results);
+    ASSERT_TRUE(status.ok());
+    ASSERT_EQ(results.size(), 2);
+    ASSERT_EQ(results[0][0], 1);
+    ASSERT_EQ(results[1][0], 5);
+
+    for (int i = 1; i <= 7; i++) {
+        status = table.Append(vec_nums[i]);
+        ASSERT_TRUE(status.ok());
+    }
+    results.clear();
+    status = table.Lookup(0, 1, 5, &results);
+    ASSERT_TRUE(status.ok());
+    std::unordered_map<uint64_t, int> counter;
+    ASSERT_EQ(results.size(), 9);
+    for (std::vector<uint64_t> &r : results) {
+        counter[r[0]]++;
+    }
+    ASSERT_EQ(counter[1], 2);
+    ASSERT_EQ(counter[2], 2);
+    ASSERT_EQ(counter[3], 3);
+    ASSERT_EQ(counter[4], 1);
+    ASSERT_EQ(counter[5], 1);
+}
 
 int main(int argc, char **argv) {
     testing::InitGoogleTest(&argc, argv);

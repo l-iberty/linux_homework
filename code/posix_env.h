@@ -55,7 +55,7 @@ public:
 
     Status Append(const Slice &slice) override {
         if (pos_ + slice.size() > kWritableBufferSize) {
-			Status status;
+            Status status;
             if (pos_ == 0) {
                 /* 无法将slice中的数据一次性拷贝到buf_[],需要分多次拷贝 */
                 size_t bytes_left = slice.size();
@@ -92,9 +92,6 @@ public:
         }
         if (fd_ >= 0 && ::close(fd_) == 0) {
             fd_ = -1;
-            if (offset_ == 0) {
-                remove(filename_.c_str());
-            }
             return Status::OK();
         }
         return Status::IOError();
@@ -108,7 +105,7 @@ public:
         if (bytes_written <= 0) {
             return Status::IOError();
         }
-		pos_ = 0;
+        pos_ = 0;
         return Status::OK();
     }
 
@@ -129,7 +126,6 @@ public:
     PosixEnv() = default;
 
     PosixEnv(const PosixEnv &) = delete;
-
     PosixEnv &operator=(const PosixEnv &)= delete;
 
     ~PosixEnv() = default;
@@ -140,12 +136,14 @@ public:
             *size = static_cast<size_t>(buf.st_size);
             return Status::OK();
         }
+        *size = 0;
         return Status::IOError();
     }
 
     Status NewRandomAccessFile(const std::string &filename, RandomAccessFile **result) override {
         int fd = ::open(filename.c_str(), O_RDONLY);
         if (fd < 0) {
+            *result = nullptr;
             return Status::IOError();
         }
 
@@ -156,6 +154,18 @@ public:
     Status NewWritableFile(const std::string &filename, WritableFile **result) override {
         int fd = ::open(filename.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0664);
         if (fd < 0) {
+            *result = nullptr;
+            return Status::IOError();
+        }
+
+        *result = new PosixWritableFile(filename, fd);
+        return Status::OK();
+    }
+
+    Status OpenWritableFile(const std::string &filename, WritableFile **result) override {
+        int fd = ::open(filename.c_str(), O_RDWR | O_CREAT | O_APPEND, 0664);
+        if (fd < 0) {
+            *result = nullptr;
             return Status::IOError();
         }
 
@@ -163,7 +173,6 @@ public:
         return Status::OK();
     }
 };
-
 
 #endif /* WIN32 */
 #endif /* TABLE_STORAGE_POSIXENV_H */
