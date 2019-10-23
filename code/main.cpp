@@ -108,7 +108,7 @@ TEST(table_storage, multi_thread) {
 }
 #endif
 
-#if 0
+#if 1
 TEST(table_storage, single_thread1) {
     Table table("table1", "index1", "MANIFEST1");
 	TestHelper testhlp;
