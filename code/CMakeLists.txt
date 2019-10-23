@@ -11,6 +11,7 @@ set(SOURCE_FILES
         posix_env.h
         windows_env.h
         mutexlock.h
+        test_helper.h
         table.h
         table.cpp
         coding.h

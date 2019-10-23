@@ -141,8 +141,13 @@ public:
     ~WindowsEnv() = default;
 
     Status GetFileSize(const std::string &filename, size_t *size) override {
-		HANDLE file_handle = ::CreateFileA(filename.c_str(), GENERIC_READ, 0, nullptr,
-			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+		HANDLE file_handle = ::CreateFileA(filename.c_str(),
+			GENERIC_READ,
+			FILE_SHARE_READ | FILE_SHARE_WRITE,
+			nullptr,
+			OPEN_EXISTING,
+			FILE_ATTRIBUTE_NORMAL,
+			0);
 		if (file_handle == INVALID_HANDLE_VALUE) {
 		    *size = 0;
 			return Status::IOError();
@@ -153,8 +158,13 @@ public:
     }
 
     Status NewRandomAccessFile(const std::string &filename, RandomAccessFile **result) override {
-		HANDLE file_handle = ::CreateFileA(filename.c_str(), GENERIC_READ, 0, nullptr,
-			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+		HANDLE file_handle = ::CreateFileA(filename.c_str(),
+			GENERIC_READ, 
+			FILE_SHARE_READ | FILE_SHARE_WRITE, 
+			nullptr,
+			OPEN_EXISTING, 
+			FILE_ATTRIBUTE_NORMAL, 
+			0);
 		if (file_handle == INVALID_HANDLE_VALUE) {
 		    *result = nullptr;
 			return Status::IOError();
@@ -165,8 +175,13 @@ public:
     }
 
 	Status NewWritableFile(const std::string &filename, WritableFile **result) override {
-		HANDLE file_handle = ::CreateFileA(filename.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-			CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+		HANDLE file_handle = ::CreateFileA(filename.c_str(),
+			GENERIC_READ | GENERIC_WRITE,
+			FILE_SHARE_READ | FILE_SHARE_WRITE,
+			nullptr,
+			CREATE_ALWAYS,
+			FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH,
+			0);
 		if (file_handle == INVALID_HANDLE_VALUE) {
 		    *result = nullptr;
 			return Status::IOError();
@@ -177,8 +192,13 @@ public:
 	}
 
 	Status OpenWritableFile(const std::string &filename, WritableFile **result) override {
-		HANDLE file_handle = ::CreateFileA(filename.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-			OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+		HANDLE file_handle = ::CreateFileA(filename.c_str(),
+			GENERIC_READ | GENERIC_WRITE,
+			FILE_SHARE_READ | FILE_SHARE_WRITE,
+			nullptr,
+			OPEN_ALWAYS,
+			FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH,
+			0);
 		if (file_handle == INVALID_HANDLE_VALUE) {
 		    *result = nullptr;
 			return Status::IOError();
@@ -194,7 +214,6 @@ public:
         return Status::OK();
     }
 };
-
 
 #endif /* WIN32 */
 #endif /* TABLE_STORAGE_WINDOWSENV_H */

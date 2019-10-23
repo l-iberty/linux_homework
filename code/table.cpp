@@ -74,7 +74,10 @@ Status Table::BuildIndexBlock(int attr_id) {
     uint64_t offset = attr_id * sizeof(uint64_t);
     std::vector<IndexEntry> index_entries;
     for (int i = 0; i < nr_entries_; i++) {
-        table_file_readonly_->Read(offset, sizeof(uint64_t), scratch, &result);
+        status = table_file_readonly_->Read(offset, sizeof(uint64_t), scratch, &result);
+		if (!status.ok()) {
+			return status;
+		}
         index_entries.push_back(std::make_pair(
                 DecodeFixed64(result.data()), i));
         offset += kNumTableAttributes * sizeof(uint64_t);
@@ -94,29 +97,23 @@ Status Table::BuildIndexBlock(int attr_id) {
         PutFixed64(&d, index_entries[i].first);
         PutFixed32(&d, index_entries[i].second);
     }
+
     status = index_file_->Append(d);
-    if (!status.ok()) {
-        return status;
-    }
-
-    status = index_file_->Close();
-    if (!status.ok()) {
-        return status;
-    }
-
-    /* 打开只读的index_file_以便后续使用 */
-    if (index_file_readonly_ == nullptr) {
-        status = env_->NewRandomAccessFile(index_file_name_, &index_file_readonly_);
-        if (!status.ok()) {
-            return status;
-        }
-    }
-
-    return Status::OK();
+    if (status.ok()) {
+	    status = index_file_->Close();
+		if (status.ok()) {
+			/* 打开只读的index_file_以便后续使用 */
+			if (index_file_readonly_ == nullptr) {
+				status = env_->NewRandomAccessFile(index_file_name_, &index_file_readonly_);
+			}
+		}
+	}
+	return status;
 }
 
 Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
                      std::vector<std::vector<uint64_t>> *results) {
+	Status status;
     Slice slice;
     char scratch[kNumTableAttributes * sizeof(uint64_t)];
 
@@ -126,13 +123,13 @@ Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
     }
 
     if (index_attr_id_ != attr_id ||
-        table_file_readonly_ == nullptr && index_file_readonly_ == nullptr) {
-        /* 索引不存在则顺序查找table_file */
-        Status status;
-        status = env_->NewRandomAccessFile(table_file_name_, &table_file_readonly_);
-        if (!status.ok()) {
-            return status;
-        }
+        index_file_readonly_ == nullptr) { /* 索引不存在则读取table_file进行顺序查找 */
+		if (table_file_readonly_ == nullptr) {
+			status = env_->NewRandomAccessFile(table_file_name_, &table_file_readonly_);
+			if (!status.ok()) {
+				return status;
+			}
+		}
         uint64_t offset = 0;
         for (int i = 0; i < nr_entries_; i++) {
             status = table_file_readonly_->Read(offset, sizeof(scratch), scratch, &slice);
@@ -154,9 +151,15 @@ Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
     std::vector<IndexEntry> index_entries;
     uint64_t offset = 0;
     for (int i = 0; i < nr_entries_; i++) {
-        index_file_readonly_->Read(offset, sizeof(uint64_t), scratch, &slice);
+        status = index_file_readonly_->Read(offset, sizeof(uint64_t), scratch, &slice);
+		if (!status.ok()) {
+			return status;
+		}
         uint64_t var = DecodeFixed64(slice.data());
-        index_file_readonly_->Read(offset + sizeof(uint64_t), sizeof(uint32_t), scratch, &slice);
+        status = index_file_readonly_->Read(offset + sizeof(uint64_t), sizeof(uint32_t), scratch, &slice);
+		if (!status.ok()) {
+			return status;
+		}
         uint32_t index = DecodeFixed32(slice.data());
         index_entries.push_back(std::make_pair(var, index));
         offset += sizeof(uint64_t) + sizeof(uint32_t);
@@ -170,18 +173,20 @@ Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
 
     for (int i = lower_bound_idx; i <= upper_bound_idx; i++) {
         const size_t nbytes_per_record = kNumTableAttributes * sizeof(uint64_t);
-        table_file_readonly_->Read(index_entries[i].second * nbytes_per_record,
-                                   nbytes_per_record, scratch, &slice);
-        std::vector<uint64_t> r = Decode(slice.data());
+		status = table_file_readonly_->Read(index_entries[i].second * nbytes_per_record,
+			nbytes_per_record, scratch, &slice);
+		if (!status.ok()) {
+			return status;
+		}
+        std::vector<uint64_t> r = Decode(slice);
         results->push_back(r);
     }
 
-    return Status::OK();
+	return status;
 }
 
 Status Table::Finish() {
     Status status;
-
     if (table_file_ != nullptr) {
         delete table_file_;
         table_file_ = nullptr;

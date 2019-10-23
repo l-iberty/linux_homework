@@ -6,7 +6,7 @@
 
 class Status {
 public:
-    Status() : msg_("") {}
+    Status() : code_(kOk), msg_("") {}
 
     std::string ToString() const { return msg_.ToString(); }
 
