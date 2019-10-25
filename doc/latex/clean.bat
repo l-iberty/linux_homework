@@ -1,0 +1,1 @@
+@del *.aux *.dvi *.log *.synctex.gz *.bak *.sav *.toc *.glo *.ist *.out *.synctex.gz(busy)

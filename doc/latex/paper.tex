@@ -1,0 +1,98 @@
+\documentclass[bachelor]{thesis-uestc}
+\usepackage{indentfirst}
+\usepackage{amssymb, amsmath}
+\usepackage{graphicx, subfigure}
+\usepackage{algorithm, algorithmic, float}
+% 没有使用thesis-uestc的算法模板, 需将thesis-uestc中的相关内容注释掉, 避免冲突
+\usepackage{listings}
+\usepackage{fancyhdr}
+\usepackage{booktabs}
+
+% ----------------------------------------- Document -----------------------------------------
+
+\begin{document}
+
+% ----------------------------------------- 目录 -----------------------------------------
+\thesistableofcontents
+
+% ----------------------------------------- 正文 -----------------------------------------
+\thesischapterexordium % 需求分析
+
+\section{总体要求}
+\begin{itemize}
+	\item 存储一张表，然后能对该表进行查询、添加等操作。上述功能以API的形式提供给应用使用。
+\end{itemize}
+
+\begin{figure}[htbp]
+	\centering\includegraphics[height=6cm]{images/use_case.png}
+	\caption{用例图}
+	\label{fig:use_case}
+\end{figure}
+
+\section{存储要求}
+\begin{itemize}
+	\item 存储一张表，然后能对该表进行查询、添加等操作。上述功能以API的形式提供给应用使用。
+	\item 该表有100个属性，每个属性都是int64\_t类型；
+	\item 需要支持的最大行数为1百万行。
+\end{itemize}
+
+\section{添加要求}
+\begin{itemize}
+	\item 提供API函数，实现向表格添加一行的功能（添加到表格的末尾）。
+\end{itemize}
+
+\section{搜索要求}
+\begin{itemize}
+	\item 提供API函数，实现对表格的某一个属性进行范围查找的功能。例如：查找在属性A上，大于等于50，小于等于100的所有行
+	\item 用户可以指定在哪一个属性上进行搜索；
+	\item 当搜索结果包含的行数过多时，可以只返回一小部分，如10行等。
+\end{itemize}
+
+\section{索引要求}
+\begin{itemize}
+	\item 提供API函数，为表格的某一个属性建立索引结构，以实现快速搜索；
+	\item 自行选择使用哪种数据结构，建立索引结构，比如B+树等；
+	\item 建立的索引结构，需要保存到一个文件中（索引文件）；下次重启应用程序，并执行搜索任务时，应先检查是否已为相应属性建立了索引结构；
+	\item 即，搜索功能实现时，需要查找是否有索引文件存在，若有，则使用该文件加速搜索。	
+\end{itemize}
+
+\section{并发要求}
+\begin{itemize}
+	\item 应用程序可以以多线程的方式，使用我们提供的上述API；
+	\item 要保证多线程环境下，表、索引结构、索引文件的一致性。
+\end{itemize}
+
+\chapter{总体设计}
+\section{整个程序的架构}
+存储引擎维护三个文件：table\_file，index\_file，manifest\_file。其中，table\_file负责用户添加数据的持久化；index\_file负责索引结构的持久化；manifest\_file负责存储元数据，以便重启程序后进行恢复。\par
+用户在使用该引擎时可以以多线程方式向表中添加数据和查询数据，但建立索引时必须以单线程方式，因为索引结构属于全局结构，即整个表只有一个索引结构。如果以多线程方式建立索引就会存在一个问题：如果线程A建立了索引，那么这个索引结构只是针对线程A所添加的数据而建立的；如果线程B被调度，并且尝试建立索引，那么线程A建立的索引就会需要合并上线程B添加的数据所对应的索引。当多个线程并发地添加数据并尝试建立索引时，索引结构就会被频繁修改，造成效率的降低。基于上述考虑，该存储引擎在设计时只允许以单线程的方式建立索引，如果多线程并发添加数据，那么必须等到所有线程结束后再给表中的属性建立索引。\par
+另外，索引结构只有一个，也就是说同一时刻只存在表中的某一个属性的索引。当尝试为别的属性建立索引时，旧的索引结构就会被删除。\par
+存储引擎在开发时进行了跨平台处理，支持Linux和Windows平台。
+
+\section{关键流程分析}
+\subsection{添加数据}
+添加数据的流程图如图\ref{fig:append}所示。因为添加数据要实现多线程安全，所以需要先获得互斥锁，然后判断table\_file文件是否有效、用户输入是否有效等，检查成功后就可以将编码后的数据使用追加写的方式写入table\_file。
+
+\begin{figure}[htbp]
+	\centering\includegraphics[height=10cm]{images/append.png}
+	\caption{添加数据}
+	\label{fig:append}
+\end{figure}
+
+\subsection{建立索引}
+建立索引的流程图如图\ref{fig:build_index}所示。为标号为attr\_id所对应的属性列建立索引时，如果用户没有显式告知存储引擎，添加数据已经结束，那么程序就主动结束数据的添加，关闭可写的table\_file文件，并重新以只读方式打开table\_file。然后从table\_file读入需要建立索引的属性列的全部数据，构造一个IndexEntry结构的线性表（IndexEntry结构包含两个数据，一个是表中的数据，一个是该数据所在的行号），将其排序后写入index\_file。写入成功后重新打开一个只读的index\_file以便后续的查询操作所使用。
+
+\begin{figure}[htbp]
+	\centering\includegraphics[height=10cm]{images/build_index.png}
+	\caption{建立索引}
+	\label{fig:build_index}
+\end{figure}
+
+\subsection{查询数据}
+
+\chapter{详细设计与实现}
+
+\chapter{测试}
+
+
+\end{document}
