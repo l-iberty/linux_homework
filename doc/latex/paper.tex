@@ -102,7 +102,7 @@
 存储引擎只支持两种类型的文件：写入方式只能是追加写的可写文件WritableFile，支持随机读的只读文件RandomAccessFile。这两个文件抽象类对Linux和Windows都有具体的实现，跨平台的核心就是底层的文件操作接口。相关类图如图\ref{fig:randonaccessfile}和图\ref{fig:writablefile}所示。
 
 \begin{figure}[htbp]
-	\centering\includegraphics[height=3.5cm]{images/randomaccessfile.png}
+	\centering\includegraphics[height=5cm]{images/randomaccessfile.png}
 	\caption{RandomAccessFile类图}
 	\label{fig:randonaccessfile}
 \end{figure}
@@ -110,7 +110,7 @@
 在PosixRandomAccessFile中，成员变量fd\_是int类型的文件描述符；在WindowsRandomAccessFile中，file\_handle\_是HANDLE类型的文件句柄，二者的实质都是进程的文件指针表的索引（下标）。
 
 \begin{figure}[htbp]
-	\centering\includegraphics[height=3.5cm]{images/writablefile.png}
+	\centering\includegraphics[height=5cm]{images/writablefile.png}
 	\caption{WritableFile类图}
 	\label{fig:writablefile}
 \end{figure}
@@ -120,7 +120,7 @@
 抽象基类RandomAccessFile/WritableFile的子类实例分别由抽象基类Env的子类WindowsEnv/PosixEnv实例创建，这里使用的是工厂方法模式。Env及其子类的类图如图\ref{fig:env}所示。
 
 \begin{figure}[htbp]
-	\centering\includegraphics[height=3.5cm]{images/env.png}
+	\centering\includegraphics[height=5cm]{images/env.png}
 	\caption{Env类图}
 	\label{fig:env}
 \end{figure}
@@ -135,13 +135,148 @@ Linux平台上，PosixRandomAccessFile::Read()使用pread()系统调用根据给
 \subsection{Env工厂方法具体实现}
 抽象基类Env提供了4个接口：GetFileSize()获取文件大小；NewRandomAccessFile()创建一个RandomAccessFile子类实例；NewWritableFile()和OpenWritableFile()都是创建一个WritableFile子类实例，是不过New*会新建一个文件；Open*打开一个已存在的文件，并将文件指针移到文件末尾。\par
 Linux平台上PosixEnv::GetFileSize()使用stat()系统调用，Windows平台上WindowsEnv::GetFileSize()先使用CreateFile()打开文件，获得文件句柄，再使用GetFileSize()系统调用获得文件大小，最后CloseHandle()关闭文件句柄。\par
-Linux平台上PosixEnv::NewRandomAccessFile()/NewWritableFile()使用open()系统调用打开文件，Windows平台上WindowsEnv::NewRandomAccessFile()/NewWritableFile()使用CreateFile()系统调用打开文件。这里需要注意，Linux的open()打开的文件默认是非阻塞的，即文件打开到关闭期间，可以调用open()再次打开之；但是Windows需要给CreateFile()指定FILE\_SHARE\_READ或FILE\_SHARE\_WRITE显式地创建为非阻塞模式，否则在关闭文件前无法再次打开之。
+Linux平台上PosixEnv::NewRandomAccessFile()/NewWritableFile()使用open()系统调用打开文件，Windows平台上WindowsEnv::NewRandomAccessFile()/NewWritableFile()使用CreateFile()系统调用打开文件。这里需要注意，Linux的open()打开的文件默认是非阻塞的，即文件打开到关闭期间，可以调用open()再次打开之；但是Windows需要给CreateFile()指定FILE\_SHARE\_READ或FILE\_SHARE\_WRITE显式地创建为非阻塞模式，否则在关闭文件前无法再次打开之。\par
+PosixEnv和WindiwsEnv的代码如下：
+\begin{lstlisting}[language=C++, basicstyle=\ttfamily\tiny, numbers=left, numberstyle=\tiny, keywordstyle=\color{blue!70}, commentstyle=\color{red!50!green!50!blue!50}, frame=shadowbox, rulesepcolor=\color{red!20!green!20!blue!20}]
+class PosixEnv : public Env {
+public:
+    PosixEnv() = default;
+    PosixEnv(const PosixEnv &) = delete;
+    PosixEnv &operator=(const PosixEnv &)= delete;
+    ~PosixEnv() = default;
+
+    Status GetFileSize(const std::string &filename, size_t *size) override {
+        struct stat buf;
+        if (::stat(filename.c_str(), &buf) >= 0) {
+            *size = static_cast<size_t>(buf.st_size);
+            return Status::OK();
+        }
+        *size = 0;
+        return Status::IOError();
+    }
+
+    Status NewRandomAccessFile(const std::string &filename, RandomAccessFile **result) override {
+        int fd = ::open(filename.c_str(), O_RDONLY);
+        if (fd < 0) {
+            *result = nullptr;
+            return Status::IOError();
+        }
+
+        *result = new PosixRandomAccessFile(filename, fd);
+        return Status::OK();
+    }
+
+    Status NewWritableFile(const std::string &filename, WritableFile **result) override {
+        int fd = ::open(filename.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0664);
+        if (fd < 0) {
+            *result = nullptr;
+            return Status::IOError();
+        }
+
+        *result = new PosixWritableFile(filename, fd);
+        return Status::OK();
+    }
+
+    Status OpenWritableFile(const std::string &filename, WritableFile **result) override {
+        int fd = ::open(filename.c_str(), O_RDWR | O_CREAT | O_APPEND, 0664);
+        if (fd < 0) {
+            *result = nullptr;
+            return Status::IOError();
+        }
+
+        *result = new PosixWritableFile(filename, fd);
+        return Status::OK();
+    }
+};
+
+class WindowsEnv : public Env {
+public:
+    WindowsEnv() = default;
+    WindowsEnv(const WindowsEnv &) = delete;
+    WindowsEnv &operator=(const WindowsEnv &)= delete;
+    ~WindowsEnv() = default;
+
+    Status GetFileSize(const std::string &filename, size_t *size) override {
+		HANDLE file_handle = ::CreateFileA(filename.c_str(),
+			GENERIC_READ,
+			FILE_SHARE_READ | FILE_SHARE_WRITE,
+			nullptr,
+			OPEN_EXISTING,
+			FILE_ATTRIBUTE_NORMAL,
+			0);
+		if (file_handle == INVALID_HANDLE_VALUE) {
+		    *size = 0;
+			return Status::IOError();
+		}
+		*size = ::GetFileSize(file_handle, nullptr);
+		::CloseHandle(file_handle);
+        return Status::OK();
+    }
+
+    Status NewRandomAccessFile(const std::string &filename, RandomAccessFile **result) override {
+		HANDLE file_handle = ::CreateFileA(filename.c_str(),
+			GENERIC_READ, 
+			FILE_SHARE_READ | FILE_SHARE_WRITE, 
+			nullptr,
+			OPEN_EXISTING, 
+			FILE_ATTRIBUTE_NORMAL, 
+			0);
+		if (file_handle == INVALID_HANDLE_VALUE) {
+		    *result = nullptr;
+			return Status::IOError();
+		}
+
+        *result = new WindowsRandomAccessFile(filename, file_handle);
+        return Status::OK();
+    }
+
+	Status NewWritableFile(const std::string &filename, WritableFile **result) override {
+		HANDLE file_handle = ::CreateFileA(filename.c_str(),
+			GENERIC_READ | GENERIC_WRITE,
+			FILE_SHARE_READ | FILE_SHARE_WRITE,
+			nullptr,
+			CREATE_ALWAYS,
+			FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH,
+			0);
+		if (file_handle == INVALID_HANDLE_VALUE) {
+		    *result = nullptr;
+			return Status::IOError();
+		}
+
+		*result = new WindowsWritableFile(filename, file_handle);
+		return Status::OK();
+	}
+
+	Status OpenWritableFile(const std::string &filename, WritableFile **result) override {
+		HANDLE file_handle = ::CreateFileA(filename.c_str(),
+			GENERIC_READ | GENERIC_WRITE,
+			FILE_SHARE_READ | FILE_SHARE_WRITE,
+			nullptr,
+			OPEN_ALWAYS,
+			FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH,
+			0);
+		if (file_handle == INVALID_HANDLE_VALUE) {
+		    *result = nullptr;
+			return Status::IOError();
+		}
+		if (GetLastError() == ERROR_ALREADY_EXISTS) {
+			if (INVALID_SET_FILE_POINTER == ::SetFilePointer(file_handle, 0, nullptr, FILE_END)) {
+		        *result = nullptr;
+				return Status::IOError();
+			}
+		}
+
+        *result = new WindowsWritableFile(filename, file_handle);
+        return Status::OK();
+    }
+};
+\end{lstlisting}
 
 \section{表数据操作设计与实现}
 表数据的具体操作包括添加数据、建立索引和范围查询，以上操作需要实现多线程安全。Table类对此进行了封装，类图如图\ref{fig:table}所示。
 
 \begin{figure}[htbp]
-	\centering\includegraphics[height=5cm]{images/table.png}
+	\centering\includegraphics[height=7cm]{images/table.png}
 	\caption{Table类图}
 	\label{fig:table}
 \end{figure}
@@ -162,7 +297,7 @@ Linux平台上PosixEnv::NewRandomAccessFile()/NewWritableFile()使用open()系�
 	\begin{itemize}
 		\item Status Append(std::vector<uint64\_t> \&data) 向表中添加数据，data的长度要求等于Table::kNumTableAttributes(100)；
 		\item Status BuildIndexBlock(int attr\_id) 为属性列attr\_id建立索引结构，并将其保存到文件中；
-		\item Status Lookup(int attr\_id, uint64\_t lower\_bound, uint64\_t upper\_bound, std::vector<std::vector<uint64\_t>> *results) 在属性列attr\_id上查找[lower\_bound,upper\_bound]范围内的数据，将符合要求的行返回到results；
+		\item Status Lookup(int attr\_id, uint64\_t lower\_bound, uint64\_t upper\_bound, std:: vector<std::vector<uint64\_t>> *results) 在属性列attr\_id上查找[lower\_bound, upper\_bound]范围内的数据，将符合要求的行返回到results；
 		\item Status Finish() 结束向表中添加数据，并创建MANIFEST文件，向其中写入nr\_entries\_和index\_attr\_id\_；
 		\item int FindIndexEntryLessOrEqual(std::vector<IndexEntry> \&index\_entries, uint64\_t x) const 使用二分查找方式在index\_entries中查找Key刚好小于或等于x的IndexEntry；
 		\item int FindIndexEntryGreaterOrEqual(std::vector<IndexEntry> \&index\_entries, uint64\_t x) const 使用二分查找方式在index\_entries中查找Key刚好大于或等于x的IndexEntry；
@@ -199,7 +334,13 @@ Status Table::Append(std::vector<uint64_t> &data) {
 \end{lstlisting}
 
 \subsection{建立索引}
-Table::BuildIndexBlock()负责建立索引结构并将其保存到文件。首先读入表数据文件的某一属性列，将其作为Key，并将所属行号作为Value，封装成一个IndexEntry的KV结构index\_entries。然后将根据Key排序后的index\_entries编码成字符数组的形式写入索引文件index\_file。相应代码如下：
+\begin{figure}[htbp]
+	\centering\includegraphics[height=4cm]{images/index_demo.png}
+	\caption{Demo：为Attr\_id属性列建立索引}
+	\label{fig:index_demo}
+\end{figure}
+
+Table::BuildIndexBlock()负责建立索引结构并将其保存到文件。首先读入表数据文件的某一属性列attr\_id（如图\ref{fig:index_demo}所示），将其作为Key，并将所属行号作为Value，封装成一个IndexEntry的KV结构index\_entries。然后将根据Key排序后的index\_entries编码成字符数组的形式写入索引文件index\_file。相应代码如下：
 
 \begin{lstlisting}[language=C++, basicstyle=\ttfamily\tiny, numbers=left, numberstyle=\tiny, keywordstyle=\color{blue!70}, commentstyle=\color{red!50!green!50!blue!50}, frame=shadowbox, rulesepcolor=\color{red!20!green!20!blue!20}]
 Status Table::BuildIndexBlock(int attr_id) {
@@ -343,7 +484,7 @@ Status Table::BuildIndexBlock(int attr_id) {
 多线程安全主要由两个类实现：Mutex和MutexLock，类图如图\ref{fig:mutexlock}所示。
 
 \begin{figure}[htbp]
-	\centering\includegraphics[height=1.5cm]{images/mutexlock.png}
+	\centering\includegraphics[height=2cm]{images/mutexlock.png}
 	\caption{MutexLock类图}
 	\label{fig:mutexlock}
 \end{figure}
@@ -382,7 +523,7 @@ private:
 LevelDB中的数据都是用Slice类封装，因为只是保存了指针，不存在数据的深拷贝，所以在传递参数时开销非常小。类图如图\ref{fig:slice}所示。
 
 \begin{figure}[htbp]
-	\centering\includegraphics[height=3cm]{images/slice.png}
+	\centering\includegraphics[height=5cm]{images/slice.png}
 	\caption{Slice类图}
 	\label{fig:slice}
 \end{figure}
@@ -393,7 +534,7 @@ Slice类提供了4个构造函数，用户可以创建一个不含任何数据�
 程序中几乎所有函数的返回值都是Status对象，表示操作是否成功，以及错误类型。类图如图\ref{fig:status}所示。
 
 \begin{figure}[htbp]
-	\centering\includegraphics[height=3cm]{images/status.png}
+	\centering\includegraphics[height=5cm]{images/status.png}
 	\caption{Status类图}
 	\label{fig:status}
 \end{figure}
@@ -422,7 +563,7 @@ Status定义了四种操作状态：成功、未找到（主要用于Table的数
 
 \section{测试内容}
 \subsection{测试用例1：单线程}
-每次添加1000条记录，每条记录中的100个属性值随机生成；在第1个属性上查询，查询范围是[100,1000000]。每添加一个数据就执行一次查询，此时的查询操作需要直接读取表数据文件进行，因为索引文件尚未建立。等到所有数据添加结束后，建立索引结构，创建索引文件再次查询，并将查询结果打印出来（最多打印10条记录）\par
+每次添加1000条记录，每条记录中的100个属性值随机生成；在第1个属性上查询，查询范围是[1000,100000000]。每添加一个数据就执行一次查询，此时的查询操作需要直接读取表数据文件进行，因为索引文件尚未建立。等到所有数据添加结束后，建立索引结构，创建索引文件再次查询，并将查询结果打印出来（最多打印10条记录）\par
 测试需要多次进行，目的是测试程序是否能在重启后恢复之前的状态，继续接受添加/查询/建立索引的操作。测试代码如下：
 
 \begin{lstlisting}[language=C++, basicstyle=\ttfamily\tiny, numbers=left, numberstyle=\tiny, keywordstyle=\color{blue!70}, commentstyle=\color{red!50!green!50!blue!50}, frame=shadowbox, rulesepcolor=\color{red!20!green!20!blue!20}]
@@ -432,8 +573,8 @@ TEST(table_storage, single_thread1) {
 	Random rnd;
 	Status status;
 	const int n = 1000;
-	const uint64_t lower_bound = 100;
-	const uint64_t upper_bound = 1000000;
+	const uint64_t lower_bound = 1000;
+	const uint64_t upper_bound = 100000000;
 	int query_attr_id = 0;
 	size_t nr_expected_query_results = 0;
 	std::vector<std::vector<uint64_t>> query_results;
@@ -574,11 +715,15 @@ TEST(table_storage, multi_thread) {
 \section{测试结果}
 上述两个测试用例的测试结果如下：
 \begin{figure}[htbp]
-	\centering\includegraphics[height=3cm]{images/test_linux.png}
+	\centering\includegraphics[height=10cm]{images/test_linux.png}
 	\caption{测试结果}
 	\label{fig:test_linux}
 \end{figure}
 
-
-
+如图\ref{fig:test_linux}所示，单线程和多线程两个测试用例均测试通过。创建的表数据文件、索引文件以及存储元数据的MANIFEST文件如图\ref{fig:test_linux_files}所示。
+\begin{figure}[htbp]
+	\centering\includegraphics[height=5cm]{images/test_linux_files.png}
+	\caption{输出文件}
+	\label{fig:test_linux_files}
+\end{figure}
 \end{document}
