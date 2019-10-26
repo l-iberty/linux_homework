@@ -4,13 +4,12 @@
 #include "posix_env.h"
 #else
 #include "windows_env.h"
-#endif // WIN32
+#endif  // WIN32
 
-Env* CreateEnv()
-{
+Env* CreateEnv() {
 #ifndef WIN32
-    return new PosixEnv();
+  return new PosixEnv();
 #else
-    return new WindowsEnv();
+  return new WindowsEnv();
 #endif
 }
