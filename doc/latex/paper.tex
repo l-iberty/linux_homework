@@ -107,13 +107,17 @@
 	\label{fig:randonaccessfile}
 \end{figure}
 
+在PosixRandomAccessFile中，成员变量fd\_是int类型的文件描述符；在WindowsRandomAccessFile中，file\_handle\_是HANDLE类型的文件句柄，二者的实质都是进程的文件指针表的索引（下标）。
+
 \begin{figure}[htbp]
 	\centering\includegraphics[height=3.5cm]{images/writablefile.png}
 	\caption{WritableFile类图}
 	\label{fig:writablefile}
 \end{figure}
 
-抽象基类RandomAccessFile/WritableFile的子类实例分别由抽象基类Env的子类WindowsEnv/PosixEnv实例创建，使用工厂方法模式。Env及其子类的类图如图所示。
+在WritableFile的两个子类中，buf\_是写缓冲，每次接受到文件写请求时都先将数据写入缓冲区，待缓冲区满后在写入磁盘；pos\_表示当前缓冲区内的数据写到哪里了；offset\_是文件的磁盘偏移，等价于文件的当前大小，每次Flush数据到磁盘时都会更新offset\_。
+
+抽象基类RandomAccessFile/WritableFile的子类实例分别由抽象基类Env的子类WindowsEnv/PosixEnv实例创建，这里使用的是工厂方法模式。Env及其子类的类图如图\ref{fig:env}所示。
 
 \begin{figure}[htbp]
 	\centering\includegraphics[height=3.5cm]{images/env.png}
@@ -121,7 +125,7 @@
 	\label{fig:env}
 \end{figure}
 
-\subsection{文件I/O具体实现}
+\subsection{文件I/O设计与实现}
 \subsubsection{文件随机读}
 Linux平台上，PosixRandomAccessFile::Read()使用pread()系统调用根据给定的偏移量随机读；Windows平台上，WindowsRandomAccessFile::Read()使用ReadFile()和参数OVERLAPPED实现随机读。
 
@@ -133,7 +137,448 @@ Linux平台上，PosixRandomAccessFile::Read()使用pread()系统调用根据给
 Linux平台上PosixEnv::GetFileSize()使用stat()系统调用，Windows平台上WindowsEnv::GetFileSize()先使用CreateFile()打开文件，获得文件句柄，再使用GetFileSize()系统调用获得文件大小，最后CloseHandle()关闭文件句柄。\par
 Linux平台上PosixEnv::NewRandomAccessFile()/NewWritableFile()使用open()系统调用打开文件，Windows平台上WindowsEnv::NewRandomAccessFile()/NewWritableFile()使用CreateFile()系统调用打开文件。这里需要注意，Linux的open()打开的文件默认是非阻塞的，即文件打开到关闭期间，可以调用open()再次打开之；但是Windows需要给CreateFile()指定FILE\_SHARE\_READ或FILE\_SHARE\_WRITE显式地创建为非阻塞模式，否则在关闭文件前无法再次打开之。
 
+\section{表数据操作设计与实现}
+表数据的具体操作包括添加数据、建立索引和范围查询，以上操作需要实现多线程安全。Table类对此进行了封装，类图如图\ref{fig:table}所示。
+
+\begin{figure}[htbp]
+	\centering\includegraphics[height=5cm]{images/table.png}
+	\caption{Table类图}
+	\label{fig:table}
+\end{figure}
+
+\begin{itemize}
+	\item 成员变量：
+	\begin{itemize}
+		\item Env *env\_ 工厂类，根据不同的平台创建不同子类类型的RandomAccessFile/WritableFile子类实例；
+		\item WritableFile *table\_file\_, *index\_file\_ 可写的表数据文件和索引文件，在向表中添加数据和建立索引结构时使用之；
+		\item RandomAccessFile **table\_file\_readonly\_, *index\_file\_readonly\_ 只读的表数据文件和索引文件，在查询数据时使用之；
+		\item std::string table\_file\_name\_, index\_file\_name\_, manifest\_file\_name 表数据文件、索引文件和存储元信息的MANIFEST文件名；
+		\item int nr\_entries\_ 表数据文件中存储了多少条数据；
+		\item bool appending\_finished 向表中添加数据的操作是否已经结束；
+		\item int index\_attr\_id\_ 当前索引结构/索引文件是为哪个属性列建立的；
+		\item Mutex mutex\_ 互斥量，向表中添加数据时需要先获得互斥锁。Mutex类只是对std::mutex的轻量级封装，需要配合MutexLock类进行使用。
+	\end{itemize}
+	\item 成员函数：
+	\begin{itemize}
+		\item Status Append(std::vector<uint64\_t> \&data) 向表中添加数据，data的长度要求等于Table::kNumTableAttributes(100)；
+		\item Status BuildIndexBlock(int attr\_id) 为属性列attr\_id建立索引结构，并将其保存到文件中；
+		\item Status Lookup(int attr\_id, uint64\_t lower\_bound, uint64\_t upper\_bound, std::vector<std::vector<uint64\_t>> *results) 在属性列attr\_id上查找[lower\_bound,upper\_bound]范围内的数据，将符合要求的行返回到results；
+		\item Status Finish() 结束向表中添加数据，并创建MANIFEST文件，向其中写入nr\_entries\_和index\_attr\_id\_；
+		\item int FindIndexEntryLessOrEqual(std::vector<IndexEntry> \&index\_entries, uint64\_t x) const 使用二分查找方式在index\_entries中查找Key刚好小于或等于x的IndexEntry；
+		\item int FindIndexEntryGreaterOrEqual(std::vector<IndexEntry> \&index\_entries, uint64\_t x) const 使用二分查找方式在index\_entries中查找Key刚好大于或等于x的IndexEntry；
+		\item Status Recover() 每次重启程序时：如果表数据文件存在就打开之，用于后续的写入；读取MENIFEST文件，恢复nr\_entries\_和index\_attr\_id\_；
+		\item std::vector<uint64\_t> Decode(const Slice \&slice) const 将Slice对象指向的字符数组解码成uint64\_t数组。
+	\end{itemize}
+\end{itemize}
+
+\subsection{添加数据}
+Table::Append()负责将数据添加到表的末尾。如果表数据文件无效，或者记录的条数已达最大值，或者用户输入的数据长度不合法，就直接返回相应的错误信息。如果没有任何异常，就可以进行数据的添加操作。首先需要获得互斥锁，然后调用PutFixed64()将用户输入的100个uint64\_t数据编码成字符数组的形式（字符数组使用std::string来实现），再调用WritableFile实例table\_file\_的Append()方法完成文件写入，最后计数器nr\_entries\_递增。相应代码如下：
+
+\begin{lstlisting}[language=C++, basicstyle=\ttfamily\tiny, numbers=left, numberstyle=\tiny, keywordstyle=\color{blue!70}, commentstyle=\color{red!50!green!50!blue!50}, frame=shadowbox, rulesepcolor=\color{red!20!green!20!blue!20}]
+Status Table::Append(std::vector<uint64_t> &data) {
+	MutexLock l(&mutex_);
+	if (table_file_ == nullptr) {
+		return Status::GeneralError("Table::table_file_ has been closed.");
+	}
+	if (nr_entries_ >= kMaxTableEntries) {
+		return Status::GeneralError("too much data");
+	}
+	assert(data.size() == kNumTableAttributes);
+	std::string d;
+	for (int i = 0; i < kNumTableAttributes; i++) {
+		PutFixed64(&d, data[i]);
+	}
+	
+	Status status = table_file_->Append(d);
+	if (!status.ok()) {
+		return status;
+	}
+	nr_entries_++;
+	return Status::OK();
+}
+\end{lstlisting}
+
+\subsection{建立索引}
+Table::BuildIndexBlock()负责建立索引结构并将其保存到文件。首先读入表数据文件的某一属性列，将其作为Key，并将所属行号作为Value，封装成一个IndexEntry的KV结构index\_entries。然后将根据Key排序后的index\_entries编码成字符数组的形式写入索引文件index\_file。相应代码如下：
+
+\begin{lstlisting}[language=C++, basicstyle=\ttfamily\tiny, numbers=left, numberstyle=\tiny, keywordstyle=\color{blue!70}, commentstyle=\color{red!50!green!50!blue!50}, frame=shadowbox, rulesepcolor=\color{red!20!green!20!blue!20}]
+Status Table::BuildIndexBlock(int attr_id) {
+	Status status;
+	if (!appending_finished_) { /* 添加数据结束后才建立索引 */
+		Finish();
+	}
+	assert(attr_id >= 0 && attr_id < kNumTableAttributes);
+	index_attr_id_ = attr_id;
+	
+	if (table_file_readonly_ == nullptr) {
+		status = env_->NewRandomAccessFile(table_file_name_, &table_file_readonly_);
+		if (!status.ok()) {
+			return status;
+		}
+	}
+	
+	/* 将attr_id所对应的列读入index_entries */
+	Slice result;
+	char scratch[sizeof(uint64_t)];
+	uint64_t offset = attr_id * sizeof(uint64_t);
+	std::vector<IndexEntry> index_entries;
+	for (int i = 0; i < nr_entries_; i++) {
+		status = table_file_readonly_->Read(offset, sizeof(uint64_t), scratch, &result);
+		if (!status.ok()) {
+			return status;
+		}
+		index_entries.push_back(std::make_pair(
+			DecodeFixed64(result.data()), i));
+		offset += kNumTableAttributes * sizeof(uint64_t);
+	}
+	
+	if (index_file_ == nullptr) {
+		status = env_->NewWritableFile(index_file_name_, &index_file_);
+		if (!status.ok()) {
+			return status;
+		}
+	}
+	
+	/* index_entries排序后写入索引文件index_file_ */
+	std::sort(index_entries.begin(), index_entries.end());
+	std::string d;
+	for (size_t i = 0; i < index_entries.size(); i++) {
+		PutFixed64(&d, index_entries[i].first);
+		PutFixed32(&d, index_entries[i].second);
+	}
+	
+	status = index_file_->Append(d);
+	if (status.ok()) {
+		status = index_file_->Close();
+		if (status.ok()) {
+			/* 打开只读的index_file_以便后续使用 */
+			if (index_file_readonly_ == nullptr) {
+				status = env_->NewRandomAccessFile(index_file_name_, &index_file_readonly_);
+			}
+		}
+	}
+	return status;
+}
+\end{lstlisting}
+
+\subsection{查询数据}
+ Table::Lookup()查询数据时首先检查相应属性对因的索引文件是否存在，如果不存在就直接读取表数据文件进行逐行查找，效率较低。如果索引文件存在，就可以在索引结构上进行二分查找，确定符合要求的数据的行号，然后就可以对表数据文件进行随机读，将读入的数据编码后返回给用户。相应代码如下：
+ 
+ \begin{lstlisting}[language=C++, basicstyle=\ttfamily\tiny, numbers=left, numberstyle=\tiny, keywordstyle=\color{blue!70}, commentstyle=\color{red!50!green!50!blue!50}, frame=shadowbox, rulesepcolor=\color{red!20!green!20!blue!20}]
+ Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
+ 	std::vector<std::vector<uint64_t>> *results) {
+	 Status status;
+	 Slice slice;
+	 char scratch[kNumTableAttributes * sizeof(uint64_t)];
+ 
+	 if (table_file_ != nullptr) {
+	 assert(!appending_finished_);
+	 	table_file_->Flush();
+	 }
+ 
+ 	if (index_attr_id_ != attr_id ||
+ 		index_file_readonly_ == nullptr) { /* 索引不存在则读取table_file进行顺序查找 */
+ 		if (table_file_readonly_ == nullptr) {
+ 			status = env_->NewRandomAccessFile(table_file_name_, &table_file_readonly_);
+ 			if (!status.ok()) {
+ 				return status;
+ 			}
+ 		}
+ 		uint64_t offset = 0;
+ 		for (int i = 0; i < nr_entries_; i++) {
+			status = table_file_readonly_->Read(offset, sizeof(scratch), scratch, &slice);
+ 			if (!status.ok()) {
+ 				return status;
+ 			}
+ 			std::vector<uint64_t> r = Decode(slice);
+			if (r[attr_id] >= lower_bound && r[attr_id] <= upper_bound) {
+			 	results->push_back(r);
+			}
+ 			offset += kNumTableAttributes * sizeof(uint64_t);
+ 		}
+ 		return status;
+ 	}
+ 
+	 assert(table_file_readonly_ != nullptr);
+	 assert(index_file_readonly_ != nullptr);
+	 
+	 std::vector<IndexEntry> index_entries;
+	 uint64_t offset = 0;
+	 for (int i = 0; i < nr_entries_; i++) {
+	 	status = index_file_readonly_->Read(offset, sizeof(uint64_t), scratch, &slice);
+	 	if (!status.ok()) {
+	 		return status;
+		}
+ 		uint64_t var = DecodeFixed64(slice.data());
+ 		status = index_file_readonly_->Read(offset + sizeof(uint64_t), sizeof(uint32_t), scratch, &slice);
+ 		if (!status.ok()) {
+ 			return status;
+ 		}
+ 		uint32_t index = DecodeFixed32(slice.data());
+ 		index_entries.push_back(std::make_pair(var, index));
+ 		offset += sizeof(uint64_t) + sizeof(uint32_t);
+ 	}
+ 
+	 int lower_bound_idx = FindIndexEntryGreaterOrEqual(index_entries, lower_bound);
+	 int upper_bound_idx = FindIndexEntryLessOrEqual(index_entries, upper_bound);
+	 if (lower_bound_idx == -1 || upper_bound_idx == -1) {
+	 	return Status::NotFound();
+	 }
+ 
+	 for (int i = lower_bound_idx; i <= upper_bound_idx; i++) {
+		 const size_t nbytes_per_record = kNumTableAttributes * sizeof(uint64_t);
+		 status = table_file_readonly_->Read(index_entries[i].second * nbytes_per_record,
+	 	 nbytes_per_record, scratch, &slice);
+		 if (!status.ok()) {
+		 	return status;
+		 }
+		 std::vector<uint64_t> r = Decode(slice);
+		 results->push_back(r);
+	 }
+	 return status;
+ }
+ \end{lstlisting}
+
+\subsection{多线程安全}
+多线程安全主要由两个类实现：Mutex和MutexLock，类图如图\ref{fig:mutexlock}所示。
+
+\begin{figure}[htbp]
+	\centering\includegraphics[height=1.5cm]{images/mutexlock.png}
+	\caption{MutexLock类图}
+	\label{fig:mutexlock}
+\end{figure}
+
+Mutex只是对std::mutex的轻量级封装，需要配合MutexLock使用。 创建MutexLock对象是，构造函数即完成Mutex的Lock()操作；MutexLock对象析构时完成Mutex的Unlock()操作。Mutex/MutexLock的设计参考了LevelDB，相应代码如下：
+
+\begin{lstlisting}[language=C++, basicstyle=\ttfamily\tiny, numbers=left, numberstyle=\tiny, keywordstyle=\color{blue!70}, commentstyle=\color{red!50!green!50!blue!50}, frame=shadowbox, rulesepcolor=\color{red!20!green!20!blue!20}]
+class Mutex {
+public:
+	Mutex() = default;
+	~Mutex() = default;
+	
+	Mutex(const Mutex&) = delete;
+	Mutex &operator=(const Mutex&) = delete;
+	
+	void Lock() { mu_.lock(); }
+	void Unlock() { mu_.unlock(); }
+private:
+	std::mutex mu_;
+};
+
+class MutexLock {
+public:
+	MutexLock(Mutex *mu):mu_(mu) { mu_->Lock(); }
+	~MutexLock() { mu_->Unlock(); }
+	
+	MutexLock(const MutexLock&) = delete;
+	MutexLock &operator=(const MutexLock&) = delete;
+private:
+	Mutex *mu_;
+};
+\end{lstlisting}
+
+\section{其他}
+\subsection{Slice类}
+LevelDB中的数据都是用Slice类封装，因为只是保存了指针，不存在数据的深拷贝，所以在传递参数时开销非常小。类图如图\ref{fig:slice}所示。
+
+\begin{figure}[htbp]
+	\centering\includegraphics[height=3cm]{images/slice.png}
+	\caption{Slice类图}
+	\label{fig:slice}
+\end{figure}
+
+Slice类提供了4个构造函数，用户可以创建一个不含任何数据的Slice对象，或者使用给定长度的字符数组、字符串或std::string对象创建Slice对象。指针data\_指向具体的数据。
+
+\subsection{Status类}
+程序中几乎所有函数的返回值都是Status对象，表示操作是否成功，以及错误类型。类图如图\ref{fig:status}所示。
+
+\begin{figure}[htbp]
+	\centering\includegraphics[height=3cm]{images/status.png}
+	\caption{Status类图}
+	\label{fig:status}
+\end{figure}
+
+Status定义了四种操作状态：成功、未找到（主要用于Table的数据查询操作）、I/O错误（文件操作失败）和常规错误（对于常规错误，需要用户自行制定错误消息）。Status类提供了4个static方法用于创建上述4中操作状态对应的Status对象，并提供了对应的非static方法用于判断当前Status对象的状态。同样地，Status类的设计也参考了LevelDB。
+
+\subsection{数据的编码与解码}
+在进行数据的存取——写入到文件中、从文件中读取——时，需要进行必要的编码与解码。因此，我参考LevelDB设计以一组32位和64位整数和字符数组之间的编解码函数，如下所示：
+
+\begin{itemize}
+	\item void EncodeFixed64(char *dst, uint64\_t value) 将64位无符号整数编码成字符数组，保存到dst指向的内存
+	\item void EncodeFixed32(char *dst, uint32\_t value) 将32位无符号整数编码成字符数组，保存到dst指向的内存
+	\item void PutFixed64(std::string *dst, uint64\_t value) 将64位无符号整数编码成字符数组，附加到dst的末尾(通过dst->append()实现，下同)
+	\item void PutFixed32(std::string *dst, uint32\_t value) 将32位无符号整数编码成字符数组，附加到dst的末尾
+	\item uint64\_t DecodeFixed64(const char *ptr) 从ptr解码出一个uint64\_t类型的数据
+	\item uint32\_t DecodeFixed32(const char *ptr) 从ptr解码出一个uint32\_t类型的数据
+\end{itemize}
+
 \chapter{测试}
+\section{测试环境}
+\begin{itemize}
+	\item 操作系统：Ubuntu 16.04 64位
+	\item 硬件：内存4GB
+	\item 测试框架：GooglgTest
+\end{itemize}
+
+\section{测试内容}
+\subsection{测试用例1：单线程}
+每次添加1000条记录，每条记录中的100个属性值随机生成；在第1个属性上查询，查询范围是[100,1000000]。每添加一个数据就执行一次查询，此时的查询操作需要直接读取表数据文件进行，因为索引文件尚未建立。等到所有数据添加结束后，建立索引结构，创建索引文件再次查询，并将查询结果打印出来（最多打印10条记录）\par
+测试需要多次进行，目的是测试程序是否能在重启后恢复之前的状态，继续接受添加/查询/建立索引的操作。测试代码如下：
+
+\begin{lstlisting}[language=C++, basicstyle=\ttfamily\tiny, numbers=left, numberstyle=\tiny, keywordstyle=\color{blue!70}, commentstyle=\color{red!50!green!50!blue!50}, frame=shadowbox, rulesepcolor=\color{red!20!green!20!blue!20}]
+TEST(table_storage, single_thread1) {
+	Table table("table1", "index1", "MANIFEST1");
+	TestHelper testhlp;
+	Random rnd;
+	Status status;
+	const int n = 1000;
+	const uint64_t lower_bound = 100;
+	const uint64_t upper_bound = 1000000;
+	int query_attr_id = 0;
+	size_t nr_expected_query_results = 0;
+	std::vector<std::vector<uint64_t>> query_results;
+	clock_t start, end;
+	
+	/* 从data文件读取上次的查询结果数, 如果data文件存在的话 */
+	testhlp.LoadLastQueryResultsFromFile("data1", reinterpret_cast<int*>(&nr_expected_query_results));
+	
+	/* 向表中添加数据 */
+	start = clock();
+	std::cout << "Appending data...\n";
+	for (int i = 0; i < n; i++) {
+	/* 添加记录 */
+	std::vector<uint64_t> nums = rnd.GenerateRandomNumbers(Table::kNumTableAttributes);
+	status = table.Append(nums);
+	ASSERT_TRUE(status.ok());
+	
+	/* 添加的记录是否应该在后续的查询结果中出现? */
+	if (nums[query_attr_id] >= lower_bound && nums[query_attr_id] <= upper_bound) {
+		nr_expected_query_results++;
+	}
+	
+	/* 在query_attr_id指定的属性上进行范围查找. 由于索引未建立, 查询时需要读取table_file */
+	query_results.clear();
+	status = table.Lookup(query_attr_id, lower_bound, upper_bound, &query_results);
+	if (!status.ok()) {
+		ASSERT_TRUE(status.IsNotFound());
+	}
+	
+	/* 校验查询结果 */
+	ASSERT_EQ(query_results.size(), nr_expected_query_results);
+	for (size_t i = 0; i < query_results.size(); i++) {
+		ASSERT_EQ(query_results[i].size(), Table::kNumTableAttributes);
+		ASSERT_TRUE(query_results[i][query_attr_id] >= lower_bound &&
+			query_results[i][query_attr_id] <= upper_bound);
+	}
+	end = clock();
+	printf("Done. Time elapsed: %.5fs\n", (double) (end - start) / CLOCKS_PER_SEC);
+	
+	/* 将新的查询结果数写入data文件 */
+	status = testhlp.SaveLastQueryResultsToFile("data1", static_cast<int>(nr_expected_query_results));
+	ASSERT_TRUE(status.ok());
+	
+	/* 建立索引 */
+	status = table.Finish();
+	ASSERT_TRUE(status.ok());
+	status = table.BuildIndexBlock(query_attr_id);
+	ASSERT_TRUE(status.ok());
+	
+	/* 在query_attr_id指定的属性上进行范围查找. 索引已建立, 查询时使用索引加速查找 */
+	query_results.clear();
+	status = table.Lookup(query_attr_id, lower_bound, upper_bound, &query_results);
+	if (!status.ok()) {
+		ASSERT_TRUE(status.IsNotFound());
+	}
+	
+	/* 校验查询结果 */
+	ASSERT_EQ(query_results.size(), nr_expected_query_results);
+	for (size_t i = 0; i < query_results.size(); i++) {
+		ASSERT_EQ(query_results[i].size(), Table::kNumTableAttributes);
+		ASSERT_TRUE(query_results[i][query_attr_id] >= lower_bound &&
+		query_results[i][query_attr_id] <= upper_bound);
+	}
+	
+	/* 打印查询结果. 最多打印10条记录 */
+	...
+}
+\end{lstlisting}
+
+\subsection{测试用例2：多线程}
+创建8个线程并发地向表中添加数据，每个线程添加1000/8=125条记录，待线程结束后执行查询（属性列和查询范围和单线程的测试相同）。\par
+和单线程测试一样，测试需要多次进行，目的是测试程序是否能在重启后恢复之前的状态，继续接受添加/查询/建立索引的操作。测试代码如下：
+
+\begin{lstlisting}[language=C++, basicstyle=\ttfamily\tiny, numbers=left, numberstyle=\tiny, keywordstyle=\color{blue!70}, commentstyle=\color{red!50!green!50!blue!50}, frame=shadowbox, rulesepcolor=\color{red!20!green!20!blue!20}]
+TEST(table_storage, multi_thread) {
+	TestHelper testhlp;
+	Status status;
+	const int nr_thds = 8;
+	const int n = 1000 / nr_thds;
+
+	/* 从data文件读取上次的查询结果数, 如果data文件存在的话 */
+	testhlp.LoadLastQueryResultsFromFile("data0", reinterpret_cast<int*>(&g_nr_expected_query_results));
+
+	/* 创建多个线程 */
+	std::thread **thds = new std::thread*[nr_thds];
+	for (int i = 0; i < nr_thds; i++) {
+		thds[i] = new std::thread(thd_routine, n);
+	}
+	for (int i = 0; i < nr_thds; i++) {
+		thds[i]->join();
+	}
+	for (int i = 0; i < nr_thds; i++) {
+		delete thds[i];
+	}
+	delete[] thds;
+
+	/* 将新的查询结果数写入data文件 */
+	status = testhlp.SaveLastQueryResultsToFile("data0", static_cast<int>(g_nr_expected_query_results));
+	ASSERT_TRUE(status.ok());
+
+	/* 在query_attr_id指定的属性上进行范围查找. 由于索引未建立, 查询时需要读取table_file */
+	std::vector<std::vector<uint64_t>> query_results;
+	status = g_table.Lookup(g_query_attr_id, g_lower_bound, g_upper_bound, &query_results);
+	if (!status.ok()) {
+		ASSERT_TRUE(status.IsNotFound());
+	}
+
+	/* 校验查询结果 */
+	ASSERT_EQ(query_results.size(), g_nr_expected_query_results);
+	for (size_t i = 0; i < query_results.size(); i++) {
+		ASSERT_EQ(query_results[i].size(), Table::kNumTableAttributes);
+		ASSERT_TRUE(query_results[i][g_query_attr_id] >= g_lower_bound &&
+		query_results[i][g_query_attr_id] <= g_upper_bound);
+	}
+
+	/* 建立索引后在次测试查询 */
+	g_table.BuildIndexBlock(g_query_attr_id);
+	query_results.clear();
+
+	status = g_table.Lookup(g_query_attr_id, g_lower_bound, g_upper_bound, &query_results);
+		if (!status.ok()) {
+		ASSERT_TRUE(status.IsNotFound());
+	}
+
+	/* 校验查询结果 */
+	ASSERT_EQ(query_results.size(), g_nr_expected_query_results);
+	for (size_t i = 0; i < query_results.size(); i++) {
+		ASSERT_EQ(query_results[i].size(), Table::kNumTableAttributes);
+		ASSERT_TRUE(query_results[i][g_query_attr_id] >= g_lower_bound &&
+		query_results[i][g_query_attr_id] <= g_upper_bound);
+	}
+
+	/* 打印查询结果 */
+	...
+}
+\end{lstlisting}
+
+\section{测试结果}
+上述两个测试用例的测试结果如下：
+\begin{figure}[htbp]
+	\centering\includegraphics[height=3cm]{images/test_linux.png}
+	\caption{测试结果}
+	\label{fig:test_linux}
+\end{figure}
+
 
 
 \end{document}
