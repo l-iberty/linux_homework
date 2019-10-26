@@ -6,32 +6,42 @@
 #include "coding.h"
 #include "env.h"
 
-
-Table::Table(const std::string &table_file_name, const std::string &index_file_name,
-             const std::string &manifest_file_name) :
-        env_(CreateEnv()),
-        index_file_(nullptr),
-        table_file_readonly_(nullptr),
-        index_file_readonly_(nullptr),
-        table_file_name_(std::move(table_file_name)),
-        index_file_name_(std::move(index_file_name)),
-        manifest_file_name_(std::move(manifest_file_name)),
-        nr_entries_(0),
-        appending_finished_(false),
-        index_attr_id_(-1) {
+Table::Table(const std::string& table_file_name, const std::string& index_file_name,
+             const std::string& manifest_file_name)
+    : env_(CreateEnv())
+    , index_file_(nullptr)
+    , table_file_readonly_(nullptr)
+    , index_file_readonly_(nullptr)
+    , table_file_name_(std::move(table_file_name))
+    , index_file_name_(std::move(index_file_name))
+    , manifest_file_name_(std::move(manifest_file_name))
+    , nr_entries_(0)
+    , appending_finished_(false)
+    , index_attr_id_(-1)
+{
     Status status = Recover();
     assert(status.ok());
 }
 
-Table::~Table() {
+Table::~Table()
+{
     Finish();
-    if (index_file_ != nullptr) { delete index_file_; }
-    if (index_file_readonly_ != nullptr) { delete index_file_readonly_; }
-    if (table_file_readonly_ != nullptr) { delete table_file_readonly_; }
-    if (env_ != nullptr) { delete env_; }
+    if (index_file_ != nullptr) {
+        delete index_file_;
+    }
+    if (index_file_readonly_ != nullptr) {
+        delete index_file_readonly_;
+    }
+    if (table_file_readonly_ != nullptr) {
+        delete table_file_readonly_;
+    }
+    if (env_ != nullptr) {
+        delete env_;
+    }
 }
 
-Status Table::Append(std::vector<uint64_t> &data) {
+Status Table::Append(std::vector<uint64_t>& data)
+{
     MutexLock l(&mutex_);
     if (table_file_ == nullptr) {
         return Status::GeneralError("Table::table_file_ has been closed.");
@@ -53,7 +63,8 @@ Status Table::Append(std::vector<uint64_t> &data) {
     return Status::OK();
 }
 
-Status Table::BuildIndexBlock(int attr_id) {
+Status Table::BuildIndexBlock(int attr_id)
+{
     Status status;
     if (!appending_finished_) { /* 添加数据结束后才建立索引 */
         Finish();
@@ -75,11 +86,11 @@ Status Table::BuildIndexBlock(int attr_id) {
     std::vector<IndexEntry> index_entries;
     for (int i = 0; i < nr_entries_; i++) {
         status = table_file_readonly_->Read(offset, sizeof(uint64_t), scratch, &result);
-		if (!status.ok()) {
-			return status;
-		}
+        if (!status.ok()) {
+            return status;
+        }
         index_entries.push_back(std::make_pair(
-                DecodeFixed64(result.data()), i));
+            DecodeFixed64(result.data()), i));
         offset += kNumTableAttributes * sizeof(uint64_t);
     }
 
@@ -100,20 +111,21 @@ Status Table::BuildIndexBlock(int attr_id) {
 
     status = index_file_->Append(d);
     if (status.ok()) {
-	    status = index_file_->Close();
-		if (status.ok()) {
-			/* 打开只读的index_file_以便后续使用 */
-			if (index_file_readonly_ == nullptr) {
-				status = env_->NewRandomAccessFile(index_file_name_, &index_file_readonly_);
-			}
-		}
-	}
-	return status;
+        status = index_file_->Close();
+        if (status.ok()) {
+            /* 打开只读的index_file_以便后续使用 */
+            if (index_file_readonly_ == nullptr) {
+                status = env_->NewRandomAccessFile(index_file_name_, &index_file_readonly_);
+            }
+        }
+    }
+    return status;
 }
 
 Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
-                     std::vector<std::vector<uint64_t>> *results) {
-	Status status;
+                     std::vector<std::vector<uint64_t> >* results)
+{
+    Status status;
     Slice slice;
     char scratch[kNumTableAttributes * sizeof(uint64_t)];
 
@@ -122,14 +134,13 @@ Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
         table_file_->Flush();
     }
 
-    if (index_attr_id_ != attr_id ||
-        index_file_readonly_ == nullptr) { /* 索引不存在则读取table_file进行顺序查找 */
-		if (table_file_readonly_ == nullptr) {
-			status = env_->NewRandomAccessFile(table_file_name_, &table_file_readonly_);
-			if (!status.ok()) {
-				return status;
-			}
-		}
+    if (index_attr_id_ != attr_id || index_file_readonly_ == nullptr) { /* 索引不存在则读取table_file进行顺序查找 */
+        if (table_file_readonly_ == nullptr) {
+            status = env_->NewRandomAccessFile(table_file_name_, &table_file_readonly_);
+            if (!status.ok()) {
+                return status;
+            }
+        }
         uint64_t offset = 0;
         for (int i = 0; i < nr_entries_; i++) {
             status = table_file_readonly_->Read(offset, sizeof(scratch), scratch, &slice);
@@ -152,14 +163,14 @@ Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
     uint64_t offset = 0;
     for (int i = 0; i < nr_entries_; i++) {
         status = index_file_readonly_->Read(offset, sizeof(uint64_t), scratch, &slice);
-		if (!status.ok()) {
-			return status;
-		}
+        if (!status.ok()) {
+            return status;
+        }
         uint64_t var = DecodeFixed64(slice.data());
         status = index_file_readonly_->Read(offset + sizeof(uint64_t), sizeof(uint32_t), scratch, &slice);
-		if (!status.ok()) {
-			return status;
-		}
+        if (!status.ok()) {
+            return status;
+        }
         uint32_t index = DecodeFixed32(slice.data());
         index_entries.push_back(std::make_pair(var, index));
         offset += sizeof(uint64_t) + sizeof(uint32_t);
@@ -173,19 +184,20 @@ Status Table::Lookup(int attr_id, uint64_t lower_bound, uint64_t upper_bound,
 
     for (int i = lower_bound_idx; i <= upper_bound_idx; i++) {
         const size_t nbytes_per_record = kNumTableAttributes * sizeof(uint64_t);
-		status = table_file_readonly_->Read(index_entries[i].second * nbytes_per_record,
-			nbytes_per_record, scratch, &slice);
-		if (!status.ok()) {
-			return status;
-		}
+        status = table_file_readonly_->Read(index_entries[i].second * nbytes_per_record,
+                                            nbytes_per_record, scratch, &slice);
+        if (!status.ok()) {
+            return status;
+        }
         std::vector<uint64_t> r = Decode(slice);
         results->push_back(r);
     }
 
-	return status;
+    return status;
 }
 
-Status Table::Finish() {
+Status Table::Finish()
+{
     Status status;
     if (table_file_ != nullptr) {
         delete table_file_;
@@ -194,9 +206,11 @@ Status Table::Finish() {
     }
 
     /* write metedata to MANIFEST */
-    WritableFile *manifest_file = nullptr;
+    WritableFile* manifest_file = nullptr;
     status = env_->NewWritableFile(manifest_file_name_, &manifest_file);
-    if (!status.ok()) { return status; }
+    if (!status.ok()) {
+        return status;
+    }
 
     std::string d;
     PutFixed32(&d, static_cast<uint32_t>(nr_entries_));
@@ -207,7 +221,8 @@ Status Table::Finish() {
     return status;
 }
 
-int Table::FindIndexEntryGreaterOrEqual(std::vector<IndexEntry> &index_entries, uint64_t x) const {
+int Table::FindIndexEntryGreaterOrEqual(std::vector<IndexEntry>& index_entries, uint64_t x) const
+{
     int left = 0, right = static_cast<int>(index_entries.size()) - 1;
     if (x <= index_entries[0].first) {
         return 0;
@@ -219,8 +234,7 @@ int Table::FindIndexEntryGreaterOrEqual(std::vector<IndexEntry> &index_entries, 
 
     while (left < right) {
         int mid = (left + right) >> 1;
-        if (mid + 1 < index_entries.size() &&
-            index_entries[mid].first < x && x <= index_entries[mid + 1].first) {
+        if (mid + 1 < index_entries.size() && index_entries[mid].first < x && x <= index_entries[mid + 1].first) {
             return mid + 1;
         } else if (x == index_entries[mid].first) {
             return mid;
@@ -233,7 +247,8 @@ int Table::FindIndexEntryGreaterOrEqual(std::vector<IndexEntry> &index_entries, 
     return -1;
 }
 
-int Table::FindIndexEntryLessOrEqual(std::vector<IndexEntry> &index_entries, uint64_t x) const {
+int Table::FindIndexEntryLessOrEqual(std::vector<IndexEntry>& index_entries, uint64_t x) const
+{
     int left = 0, right = static_cast<int>(index_entries.size()) - 1;
     if (x < index_entries[0].first) {
         return -1;
@@ -245,8 +260,7 @@ int Table::FindIndexEntryLessOrEqual(std::vector<IndexEntry> &index_entries, uin
 
     while (left < right) {
         int mid = (left + right) >> 1;
-        if (mid + 1 < index_entries.size() &&
-            index_entries[mid].first <= x && x < index_entries[mid + 1].first) {
+        if (mid + 1 < index_entries.size() && index_entries[mid].first <= x && x < index_entries[mid + 1].first) {
             return mid;
         } else if (x == index_entries[mid].first) {
             return mid;
@@ -259,23 +273,30 @@ int Table::FindIndexEntryLessOrEqual(std::vector<IndexEntry> &index_entries, uin
     return -1;
 }
 
-Status Table::Recover() {
+Status Table::Recover()
+{
     Status status;
     Slice slice;
-    RandomAccessFile *manifest_file = nullptr;
+    RandomAccessFile* manifest_file = nullptr;
     char scratch[sizeof(int)];
 
     status = env_->OpenWritableFile(table_file_name_, &table_file_);
-    if (!status.ok()) { return status; }
+    if (!status.ok()) {
+        return status;
+    }
 
     status = env_->NewRandomAccessFile(manifest_file_name_, &manifest_file);
     if (status.ok()) {
         status = manifest_file->Read(0, sizeof(uint32_t), scratch, &slice);
-        if (!status.ok()) { return status; }
+        if (!status.ok()) {
+            return status;
+        }
         nr_entries_ = DecodeFixed32(scratch);
 
         status = manifest_file->Read(sizeof(uint32_t), sizeof(uint32_t), scratch, &slice);
-        if (!status.ok()) { return status; }
+        if (!status.ok()) {
+            return status;
+        }
         index_attr_id_ = DecodeFixed32(scratch);
 
         delete manifest_file;
@@ -283,10 +304,11 @@ Status Table::Recover() {
     return Status::OK();
 }
 
-std::vector<uint64_t> Table::Decode(const Slice &slice) const {
+std::vector<uint64_t> Table::Decode(const Slice& slice) const
+{
     assert(slice.size() == kNumTableAttributes * sizeof(uint64_t));
     std::vector<uint64_t> result;
-    const char *p = slice.data();
+    const char* p = slice.data();
     for (uint64_t off = 0; off < slice.size(); off += sizeof(uint64_t)) {
         result.push_back(DecodeFixed64(p + off));
     }

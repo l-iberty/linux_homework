@@ -9,7 +9,7 @@ public:
     ~Mutex() = default;
 
     Mutex(const Mutex&) = delete;
-    Mutex &operator=(const Mutex&) = delete;
+    Mutex& operator=(const Mutex&) = delete;
 
     void Lock() { mu_.lock(); }
     void Unlock() { mu_.unlock(); }
@@ -20,13 +20,18 @@ private:
 
 class MutexLock {
 public:
-    MutexLock(Mutex *mu):mu_(mu) { mu_->Lock(); }
+    MutexLock(Mutex* mu)
+        : mu_(mu)
+    {
+        mu_->Lock();
+    }
     ~MutexLock() { mu_->Unlock(); }
 
-	MutexLock(const MutexLock&) = delete;
-	MutexLock &operator=(const MutexLock&) = delete;
+    MutexLock(const MutexLock&) = delete;
+    MutexLock& operator=(const MutexLock&) = delete;
+
 private:
-    Mutex *mu_;
+    Mutex* mu_;
 };
 
 #endif /* TABLE_STORAGE_MUTEXLOCK_H */

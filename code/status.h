@@ -1,12 +1,15 @@
 ﻿#ifndef TABLE_STORAGE_STATUS_H
 #define TABLE_STORAGE_STATUS_H
 
-
 #include "slice.h"
 
 class Status {
 public:
-    Status() : code_(kOk), msg_("") {}
+    Status()
+        : code_(kOk)
+        , msg_("")
+    {
+    }
 
     std::string ToString() const { return msg_.ToString(); }
 
@@ -24,7 +27,7 @@ public:
 
     static Status IOError() { return Status(kIOError, "IO error"); }
 
-    static Status GeneralError(const Slice &msg) { return Status(kGeneralError, msg); }
+    static Status GeneralError(const Slice& msg) { return Status(kGeneralError, msg); }
 
 private:
     enum Code {
@@ -37,7 +40,11 @@ private:
     Code code_;
     Slice msg_;
 
-    Status(Code code, const Slice &msg) : code_(code), msg_(msg) {}
+    Status(Code code, const Slice& msg)
+        : code_(code)
+        , msg_(msg)
+    {
+    }
 };
 
 #endif /* TABLE_STORAGE_STATUS_H */

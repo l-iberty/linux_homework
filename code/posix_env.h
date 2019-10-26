@@ -10,21 +10,23 @@
 #include <algorithm>
 #include "env.h"
 
-
 class PosixRandomAccessFile : public RandomAccessFile {
 public:
-    PosixRandomAccessFile(const std::string &filename, int fd) :
-            filename_(std::move(filename)),
-            fd_(fd) {
+    PosixRandomAccessFile(const std::string& filename, int fd)
+        : filename_(std::move(filename))
+        , fd_(fd)
+    {
         assert(fd_ != -1);
     }
 
-    ~PosixRandomAccessFile() override {
+    ~PosixRandomAccessFile() override
+    {
         assert(fd_ != -1);
         ::close(fd_);
     }
 
-    Status Read(uint64_t offset, size_t nbytes, char *scratch, Slice *slice) override {
+    Status Read(uint64_t offset, size_t nbytes, char* scratch, Slice* slice) override
+    {
         assert(fd_ != -1);
         ssize_t bytes_read = ::pread(fd_, scratch, nbytes, offset);
         if (bytes_read != nbytes) {
@@ -41,19 +43,22 @@ private:
 
 class PosixWritableFile : public WritableFile {
 public:
-    PosixWritableFile(const std::string &filename, int fd) :
-            filename_(std::move(filename)),
-            fd_(fd),
-            pos_(0),
-            offset_(0) {
+    PosixWritableFile(const std::string& filename, int fd)
+        : filename_(std::move(filename))
+        , fd_(fd)
+        , pos_(0)
+        , offset_(0)
+    {
         assert(fd != -1);
     }
 
-    ~PosixWritableFile() override {
+    ~PosixWritableFile() override
+    {
         Close();
     }
 
-    Status Append(const Slice &slice) override {
+    Status Append(const Slice& slice) override
+    {
         if (pos_ + slice.size() > kWritableBufferSize) {
             Status status;
             if (pos_ == 0) {
@@ -85,7 +90,8 @@ public:
         return Status::OK();
     }
 
-    Status Close() override {
+    Status Close() override
+    {
         Status status = Flush();
         if (!status.ok()) {
             return status;
@@ -97,7 +103,8 @@ public:
         return Status::IOError();
     }
 
-    Status Flush() override {
+    Status Flush() override
+    {
         if (pos_ == 0) { /* no data in the buf_[] */
             return Status::OK();
         }
@@ -125,12 +132,13 @@ class PosixEnv : public Env {
 public:
     PosixEnv() = default;
 
-    PosixEnv(const PosixEnv &) = delete;
-    PosixEnv &operator=(const PosixEnv &)= delete;
+    PosixEnv(const PosixEnv&) = delete;
+    PosixEnv& operator=(const PosixEnv&) = delete;
 
     ~PosixEnv() = default;
 
-    Status GetFileSize(const std::string &filename, size_t *size) override {
+    Status GetFileSize(const std::string& filename, size_t* size) override
+    {
         struct stat buf;
         if (::stat(filename.c_str(), &buf) >= 0) {
             *size = static_cast<size_t>(buf.st_size);
@@ -140,7 +148,8 @@ public:
         return Status::IOError();
     }
 
-    Status NewRandomAccessFile(const std::string &filename, RandomAccessFile **result) override {
+    Status NewRandomAccessFile(const std::string& filename, RandomAccessFile** result) override
+    {
         int fd = ::open(filename.c_str(), O_RDONLY);
         if (fd < 0) {
             *result = nullptr;
@@ -151,7 +160,8 @@ public:
         return Status::OK();
     }
 
-    Status NewWritableFile(const std::string &filename, WritableFile **result) override {
+    Status NewWritableFile(const std::string& filename, WritableFile** result) override
+    {
         int fd = ::open(filename.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0664);
         if (fd < 0) {
             *result = nullptr;
@@ -162,7 +172,8 @@ public:
         return Status::OK();
     }
 
-    Status OpenWritableFile(const std::string &filename, WritableFile **result) override {
+    Status OpenWritableFile(const std::string& filename, WritableFile** result) override
+    {
         int fd = ::open(filename.c_str(), O_RDWR | O_CREAT | O_APPEND, 0664);
         if (fd < 0) {
             *result = nullptr;
