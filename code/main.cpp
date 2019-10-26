@@ -17,7 +17,7 @@
 Table g_table("table0", "index0", "MANIFEST0");
 std::atomic<size_t> g_nr_expected_query_results(0);
 const uint64_t g_lower_bound = 1000;
-const uint64_t g_upper_bound = 100000;
+const uint64_t g_upper_bound = 100000000;
 int g_query_attr_id = 0;
 
 void thd_routine(const int n) {
@@ -115,8 +115,8 @@ TEST(table_storage, single_thread1) {
     Random rnd;
     Status status;
     const int n = 1000;
-    const uint64_t lower_bound = 100;
-    const uint64_t upper_bound = 1000000;
+    const uint64_t lower_bound = 1000;
+    const uint64_t upper_bound = 100000000;
     int query_attr_id = 0;
     size_t nr_expected_query_results = 0;
     std::vector<std::vector<uint64_t>> query_results;
