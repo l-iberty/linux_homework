@@ -89,8 +89,49 @@
 \end{figure}
 
 \subsection{查询数据}
+查询数据时用户需要指定一个属性，以及在该属性上查询的范围。如果索引文件不存在就直接读取表数据文件进行顺序查找，每次读取一行数据（100个属性），判断给定属性的值是否在用户指定的查询区间内，如果是，就说明将该行数据添加到查询结果中。如果索引文件存在，就可以加速查询。因为索引结构实则是一个KV结构的数组，Key就是相应属性上的值，Value就是该属性值所属的行号，根据行号可以实现表数据文件table\_file的随机读取。查询数据的具体流程如图\ref{fig:lookup}所示。
+
+\begin{figure}[htbp]
+	\centering\includegraphics[height=10cm]{images/lookup.png}
+	\caption{查询数据}
+	\label{fig:lookup}
+\end{figure}
 
 \chapter{详细设计与实现}
+\section{文件I/O与跨平台}
+存储引擎只支持两种类型的文件：写入方式只能是追加写的可写文件WritableFile，支持随机读的只读文件RandomAccessFile。这两个文件抽象类对Linux和Windows都有具体的实现，跨平台的核心就是底层的文件操作接口。相关类图如图\ref{fig:randonaccessfile}和图\ref{fig:writablefile}所示。
+
+\begin{figure}[htbp]
+	\centering\includegraphics[height=3.5cm]{images/randomaccessfile.png}
+	\caption{RandomAccessFile类图}
+	\label{fig:randonaccessfile}
+\end{figure}
+
+\begin{figure}[htbp]
+	\centering\includegraphics[height=3.5cm]{images/writablefile.png}
+	\caption{WritableFile类图}
+	\label{fig:writablefile}
+\end{figure}
+
+抽象基类RandomAccessFile/WritableFile的子类实例分别由抽象基类Env的子类WindowsEnv/PosixEnv实例创建，使用工厂方法模式。Env及其子类的类图如图所示。
+
+\begin{figure}[htbp]
+	\centering\includegraphics[height=3.5cm]{images/env.png}
+	\caption{Env类图}
+	\label{fig:env}
+\end{figure}
+
+\subsection{文件I/O具体实现}
+\subsubsection{文件随机读}
+Linux平台上，PosixRandomAccessFile::Read()使用pread()系统调用根据给定的偏移量随机读；Windows平台上，WindowsRandomAccessFile::Read()使用ReadFile()和参数OVERLAPPED实现随机读。
+
+\subsubsection{文件追加写}
+调用WritableFile::Append()写文件时先将数据写入内存缓冲，当缓冲区满后再Flush到磁盘，以此减少磁盘I/O次数提高效率。
+
+\subsection{Env工厂方法具体实现}
+抽象基类Env提供了4个接口：GetFileSize()获取文件大小；NewRandomAccessFile()创建一个RandomAccessFile子类实例；NewWritableFile()和OpenWritableFile()都是创建一个WritableFile子类实例，是不过New*会新建一个文件；Open*打开一个已存在的文件，并将文件指针移到文件末尾。\par
+Linux平台上PosixEnv::GetFileSize()使用stat()系统调用，Windows平台上WindowsEnv::GetFileSize()先使用CreateFile()打开文件，获得文件句柄，再使用GetFileSize()系统调用获得文件大小，最后CloseHandle()关闭文件句柄。\par
+Linux平台上PosixEnv::NewRandomAccessFile()/NewWritableFile()使用open()系统调用打开文件，Windows平台上WindowsEnv::NewRandomAccessFile()/NewWritableFile()使用CreateFile()系统调用打开文件。这里需要注意，Linux的open()打开的文件默认是非阻塞的，即文件打开到关闭期间，可以调用open()再次打开之；但是Windows需要给CreateFile()指定FILE\_SHARE\_READ或FILE\_SHARE\_WRITE显式地创建为非阻塞模式，否则在关闭文件前无法再次打开之。
 
 \chapter{测试}
 

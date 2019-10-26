@@ -98,7 +98,7 @@ public:
         if (file_handle_ != INVALID_HANDLE_VALUE && ::CloseHandle(file_handle_)) {
 			file_handle_ = INVALID_HANDLE_VALUE;
             if (offset_ == 0) {
-                remove(filename_.c_str());
+                DeleteFilleA(filename_.c_str());
             }
             return Status::OK();
         }

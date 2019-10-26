@@ -3,5 +3,5 @@
 *.ist
 *.log
 *.out
-*.syntax.gz
+*.synctex.gz
 *.toc
