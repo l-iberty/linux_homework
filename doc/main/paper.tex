@@ -563,8 +563,8 @@ Status定义了四种操作状态：成功、未找到（主要用于Table的数
 
 \section{测试内容}
 \subsection{测试用例1：单线程}
-每次添加1000条记录，每条记录中的100个属性值随机生成；在第1个属性上查询，查询范围是[1000,100000000]。每添加一个数据就执行一次查询，此时的查询操作需要直接读取表数据文件进行，因为索引文件尚未建立。等到所有数据添加结束后，建立索引结构，创建索引文件再次查询，并将查询结果打印出来（最多打印10条记录）\par
-测试需要多次进行，目的是测试程序是否能在重启后恢复之前的状态，继续接受添加/查询/建立索引的操作。测试代码如下：
+每次添加1000条记录，每条记录中的100个属性值随机生成；在第1个属性上查询，查询范围是[1000,100000000]。每添加一个数据就执行一次查询，此时的查询操作需要直接读取表数据文件进行，因为索引文件尚未建立。等到所有数据添加结束后，建立索引结构，创建索引文件再次查询，并将查询结果打印出来（最多打印10条记录）。测试中，校验查询结果的方法是：每次添加数据前，先判断相应属性值是否在查询范围内，如果是，就将计数器nr\_expected\_query\_results加一。然后检查Table::Lookup()返回的查询结果的条数是否等于nr\_expected\_query\_results，如果不相等则说明查询结果错误，测试失败；如果相等则还需对所有查询结果逐一检查：每条记录在所给的查询属性上的数值是否落在查询范围内，如果有一条记录不满足则测试失败。\par
+另外，测试需要多次进行，目的是测试程序是否能在重启后恢复之前的状态，继续接受添加/查询/建立索引的操作。测试代码如下：
 
 \begin{lstlisting}[language=C++, basicstyle=\ttfamily\tiny, numbers=left, numberstyle=\tiny, keywordstyle=\color{blue!70}, commentstyle=\color{red!50!green!50!blue!50}, frame=shadowbox, rulesepcolor=\color{red!20!green!20!blue!20}]
 TEST(table_storage, single_thread1) {
@@ -587,21 +587,22 @@ TEST(table_storage, single_thread1) {
 	start = clock();
 	std::cout << "Appending data...\n";
 	for (int i = 0; i < n; i++) {
-	/* 添加记录 */
-	std::vector<uint64_t> nums = rnd.GenerateRandomNumbers(Table::kNumTableAttributes);
-	status = table.Append(nums);
-	ASSERT_TRUE(status.ok());
+		/* 添加记录 */
+		std::vector<uint64_t> nums = rnd.GenerateRandomNumbers(Table::kNumTableAttributes);
+		status = table.Append(nums);
+		ASSERT_TRUE(status.ok());
 	
-	/* 添加的记录是否应该在后续的查询结果中出现? */
-	if (nums[query_attr_id] >= lower_bound && nums[query_attr_id] <= upper_bound) {
-		nr_expected_query_results++;
-	}
+		/* 添加的记录是否应该在后续的查询结果中出现? */
+		if (nums[query_attr_id] >= lower_bound && nums[query_attr_id] <= upper_bound) {
+			nr_expected_query_results++;
+		}
 	
-	/* 在query_attr_id指定的属性上进行范围查找. 由于索引未建立, 查询时需要读取table_file */
-	query_results.clear();
-	status = table.Lookup(query_attr_id, lower_bound, upper_bound, &query_results);
-	if (!status.ok()) {
-		ASSERT_TRUE(status.IsNotFound());
+		/* 在query_attr_id指定的属性上进行范围查找. 由于索引未建立, 查询时需要读取table_file */
+		query_results.clear();
+		status = table.Lookup(query_attr_id, lower_bound, upper_bound, &query_results);
+		if (!status.ok()) {
+			ASSERT_TRUE(status.IsNotFound());
+		}
 	}
 	
 	/* 校验查询结果 */
@@ -645,7 +646,7 @@ TEST(table_storage, single_thread1) {
 \end{lstlisting}
 
 \subsection{测试用例2：多线程}
-创建8个线程并发地向表中添加数据，每个线程添加1000/8=125条记录，待线程结束后执行查询（属性列和查询范围和单线程的测试相同）。\par
+创建8个线程并发地向表中添加数据，每个线程添加1000/8=125条记录，待线程结束后执行查询（属性列和查询范围和单线程的测试相同）。校验查询结果的过程和测试用例1一致，这里不再赘述。\par
 和单线程测试一样，测试需要多次进行，目的是测试程序是否能在重启后恢复之前的状态，继续接受添加/查询/建立索引的操作。测试代码如下：
 
 \begin{lstlisting}[language=C++, basicstyle=\ttfamily\tiny, numbers=left, numberstyle=\tiny, keywordstyle=\color{blue!70}, commentstyle=\color{red!50!green!50!blue!50}, frame=shadowbox, rulesepcolor=\color{red!20!green!20!blue!20}]
@@ -712,18 +713,56 @@ TEST(table_storage, multi_thread) {
 }
 \end{lstlisting}
 
+其中，每个线程负责向表中添加数据，代码如下：
+
+\begin{lstlisting}[language=C++, basicstyle=\ttfamily\tiny, numbers=left, numberstyle=\tiny, keywordstyle=\color{blue!70}, commentstyle=\color{red!50!green!50!blue!50}, frame=shadowbox, rulesepcolor=\color{red!20!green!20!blue!20}]
+void thd_routine(const int n) {
+	Random rnd;
+	for (int i = 0; i < n; i++) {
+		/* 添加记录 */
+		std::vector<uint64_t> nums =
+		rnd.GenerateRandomNumbers(Table::kNumTableAttributes);
+		Status status = g_table.Append(nums);
+		ASSERT_TRUE(status.ok());
+		
+		/* 添加的记录是否应该在后续的查询结果中出现? */
+		if (nums[g_query_attr_id] >= g_lower_bound &&
+			nums[g_query_attr_id] <= g_upper_bound) {
+			g_nr_expected_query_results++;
+		}
+	}
+}
+\end{lstlisting}
+
+g\_nr\_expected\_query\_results是期望的查询结果条数，用于后续校验查询结果。因为该变量被多个线程并发地读写，所以将其声明为原子类型变量std::atomic<size\_t>，以此保证线程安全性。
+
 \section{测试结果}
-上述两个测试用例的测试结果如下：
+上述两个测试用例的测试结果如图\ref{fig:test_linux}所示。打印查询结果时最多打印10条，并且只打印所查询的属性列上的数值，其余属性值省略。
 \begin{figure}[htbp]
 	\centering\includegraphics[height=10cm]{images/test_linux.png}
-	\caption{测试结果}
+	\caption{测试结果(1)}
 	\label{fig:test_linux}
 \end{figure}
 
-如图\ref{fig:test_linux}所示，单线程和多线程两个测试用例均测试通过。创建的表数据文件、索引文件以及存储元数据的MANIFEST文件如图\ref{fig:test_linux_files}所示。
+如图\ref{fig:test_linux}所示，单线程和多线程两个测试用例均测试通过。创建的表数据文件、索引文件以及存储元数据的MANIFEST文件信息如图\ref{fig:test_linux_files}所示。如图可知，两个测试用例使用的表数据文件table0和table1都包含2000条记录(因为程序启动了2次，每次添加1000条数据)，每条记录100*8字节，所以总大小是1600000字节；索引文件index0和index1大小都是24000字节，其中每个索引条目是一个4+8=12字节的KV结构，因为表数据文件中包含2000条记录，所以索引文件大小等于2000*12=24000字节。
 \begin{figure}[htbp]
 	\centering\includegraphics[height=5cm]{images/test_linux_files.png}
-	\caption{输出文件}
+	\caption{输出文件(1)}
 	\label{fig:test_linux_files}
 \end{figure}
+
+下面给出添加一百万条数据的测试结果，如图\ref{fig:test_linux2}所示，测试通过。生成的表数据文件、索引文件以及MANIFEST文件如图\ref{fig:test_linux_files2}所示。一百万条记录对应的表数据文件大小为1000000*800=800000000字节，索引文件大小为1000000*12=12000000。
+
+\begin{figure}[htbp]
+	\centering\includegraphics[height=10cm]{images/test_linux2.png}
+	\caption{测试结果(2)}
+	\label{fig:test_linux2}
+\end{figure}
+
+\begin{figure}[htbp]
+	\centering\includegraphics[height=5cm]{images/test_linux_files2.png}
+	\caption{测试结果(2)}
+	\label{fig:test_linux_files2}
+\end{figure}
+
 \end{document}
